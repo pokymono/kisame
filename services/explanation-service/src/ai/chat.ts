@@ -55,6 +55,87 @@ function isDomainLike(term: string): boolean {
   return cleaned.includes('.') && !cleaned.includes(' ');
 }
 
+const COMMON_TLDS = new Set([
+  'com',
+  'net',
+  'org',
+  'edu',
+  'gov',
+  'mil',
+  'int',
+  'io',
+  'co',
+  'ai',
+  'app',
+  'dev',
+  'cloud',
+  'xyz',
+  'info',
+  'biz',
+  'me',
+  'us',
+  'uk',
+  'ca',
+  'au',
+  'de',
+  'fr',
+  'jp',
+  'nl',
+  'se',
+  'no',
+  'fi',
+  'it',
+  'es',
+  'in',
+  'br',
+  'ru',
+  'cn',
+  'kr',
+  'sg',
+  'hk',
+  'ch',
+  'pl',
+  'tv',
+  'gg',
+  'name',
+  'site',
+  'online',
+  'store',
+  'tech',
+  'systems',
+  'security',
+]);
+
+function shannonEntropy(value: string): number {
+  if (!value) return 0;
+  const counts = new Map<string, number>();
+  for (const char of value) {
+    counts.set(char, (counts.get(char) ?? 0) + 1);
+  }
+  const len = value.length;
+  let entropy = 0;
+  for (const count of counts.values()) {
+    const p = count / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+function domainLabels(domain: string): { labels: string[]; tld: string; sld: string } {
+  const labels = domain.split('.').filter(Boolean);
+  const tld = labels.length ? (labels[labels.length - 1] ?? '') : '';
+  const sld = labels.length >= 2 ? (labels[labels.length - 2] ?? '') : '';
+  return { labels, tld, sld };
+}
+
+function matchDomainValue(value: string | undefined, domain: string): boolean {
+  if (!value) return false;
+  const normalized = normalizeDomain(value);
+  if (!normalized) return false;
+  if (normalized === domain) return true;
+  return normalized.endsWith(`.${domain}`) || domain.endsWith(`.${normalized}`);
+}
+
 function normalizeSearchTerms(terms: string[]): string[] {
   return terms
     .flatMap((term) => term.split(/\s+/))
@@ -86,6 +167,7 @@ Tool usage policy:
 - Use 'pcap_domains' for capture-wide domain questions, 'pcap_top_talkers' for top IP/traffic questions, and 'pcap_protocols' for protocol stack questions.
 - Use 'pcap_domain_sessions' to connect a domain to its sessions and 'pcap_session_domains' to list domains inside a session.
 - Use 'pcap_sessions_query' to filter sessions by IP/port/domain/flags and 'pcap_timeline_range' for time-windowed analysis.
+- If asked whether a domain is malicious/safe or to assess reputation, use 'domain_risk_assess' and clearly label the result as a local heuristic (no external threat-intel).
 
 Response format:
 - Start with a short 2–4 sentence summary.
@@ -657,6 +739,208 @@ function createTools(context?: ChatContext) {
           matched_domains: matchedDomains,
           total_sessions: rows.length,
           sessions: rows.slice(0, max),
+        };
+      },
+    }),
+    domain_risk_assess: tool({
+      description:
+        'Heuristic domain risk assessment using only local PCAP evidence (no external reputation sources).',
+      inputSchema: z.object({
+        domain: z.string().min(1).describe('Domain name to assess.'),
+        include_sessions: z.boolean().optional(),
+      }),
+      execute: async ({ domain, include_sessions }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+
+        const normalized = normalizeDomain(domain);
+        if (!normalized || !isDomainLike(normalized)) {
+          return { error: `Invalid domain "${domain}".` };
+        }
+
+        ensureDomainIndex();
+        ensureSessionDomainIndex();
+        if (!domainIndex || !domainSessionIndex) {
+          return { error: 'Domain indices unavailable.' };
+        }
+
+        const counts = domainIndex.get(normalized) ?? { dns: 0, sni: 0, http: 0 };
+        const totalObservations = counts.dns + counts.sni + counts.http;
+        const sessionMap = domainSessionIndex.get(normalized) ?? new Map<string, DomainCounts>();
+
+        const sessionRows = Array.from(sessionMap.entries())
+          .map(([session_id, sessionCounts]) => {
+            const session = artifact.sessions.find((s) => s.id === session_id);
+            return {
+              session_id,
+              transport: session?.transport,
+              endpoints: session?.endpoints,
+              packet_count: session?.packet_count,
+              byte_count: session?.byte_count,
+              first_ts: session?.first_ts,
+              last_ts: session?.last_ts,
+              rule_flags: session?.rule_flags ?? [],
+              total: sessionCounts.dns + sessionCounts.sni + sessionCounts.http,
+              dns: sessionCounts.dns,
+              sni: sessionCounts.sni,
+              http: sessionCounts.http,
+            };
+          })
+          .filter((row) => row.session_id);
+
+        const uniqueIps = new Set<string>();
+        const uniquePorts = new Set<number>();
+        const ruleFlags = new Set<string>();
+        let firstSeen: number | null = null;
+        let lastSeen: number | null = null;
+        let totalBytes = 0;
+        let totalPackets = 0;
+
+        for (const row of sessionRows) {
+          if (row.endpoints?.a?.ip) uniqueIps.add(row.endpoints.a.ip);
+          if (row.endpoints?.b?.ip) uniqueIps.add(row.endpoints.b.ip);
+          if (row.endpoints?.a?.port != null) uniquePorts.add(row.endpoints.a.port);
+          if (row.endpoints?.b?.port != null) uniquePorts.add(row.endpoints.b.port);
+          for (const flag of row.rule_flags ?? []) ruleFlags.add(flag);
+          if (typeof row.first_ts === 'number') {
+            firstSeen = firstSeen == null ? row.first_ts : Math.min(firstSeen, row.first_ts);
+          }
+          if (typeof row.last_ts === 'number') {
+            lastSeen = lastSeen == null ? row.last_ts : Math.max(lastSeen, row.last_ts);
+          }
+          totalBytes += row.byte_count ?? 0;
+          totalPackets += row.packet_count ?? 0;
+        }
+
+        const timelineEvents = artifact.timeline ?? [];
+        for (const event of timelineEvents) {
+          if (
+            matchDomainValue(event.meta?.dns_name, normalized) ||
+            matchDomainValue(event.meta?.sni, normalized) ||
+            matchDomainValue(event.meta?.http?.host ?? undefined, normalized) ||
+            event.summary.toLowerCase().includes(normalized)
+          ) {
+            firstSeen = firstSeen == null ? event.ts : Math.min(firstSeen, event.ts);
+            lastSeen = lastSeen == null ? event.ts : Math.max(lastSeen, event.ts);
+          }
+        }
+
+        const { labels, tld, sld } = domainLabels(normalized);
+        const domainCore = sld || labels[0] || normalized;
+        const digits = domainCore.replace(/\D/g, '').length;
+        const letters = domainCore.replace(/[^a-z]/gi, '').length;
+        const digitRatio = domainCore.length > 0 ? digits / domainCore.length : 0;
+        const hyphenCount = (domainCore.match(/-/g) ?? []).length;
+        const entropy = shannonEntropy(domainCore);
+        const punycode = normalized.includes('xn--');
+        const subdomainCount = Math.max(0, labels.length - 2);
+
+        const signals: Array<{ signal: string; weight: number; detail: string }> = [];
+        let score = 10;
+
+        if (punycode) {
+          score += 15;
+          signals.push({ signal: 'punycode', weight: 15, detail: 'IDN/punycode label detected.' });
+        }
+
+        if (normalized.length > 30) {
+          score += 8;
+          signals.push({ signal: 'length', weight: 8, detail: 'Unusually long domain.' });
+        }
+
+        if (subdomainCount >= 3) {
+          score += 5;
+          signals.push({ signal: 'subdomains', weight: 5, detail: 'Many subdomain levels.' });
+        }
+
+        if (digitRatio > 0.3) {
+          score += 10;
+          signals.push({
+            signal: 'digit_ratio',
+            weight: 10,
+            detail: `High digit ratio in label (${(digitRatio * 100).toFixed(0)}%).`,
+          });
+        }
+
+        if (hyphenCount >= 2) {
+          score += 5;
+          signals.push({ signal: 'hyphens', weight: 5, detail: 'Multiple hyphens in label.' });
+        }
+
+        if (entropy >= 4.0) {
+          score += 18;
+          signals.push({ signal: 'entropy', weight: 18, detail: 'Very high label entropy.' });
+        } else if (entropy >= 3.4) {
+          score += 12;
+          signals.push({ signal: 'entropy', weight: 12, detail: 'High label entropy.' });
+        }
+
+        if (tld && !COMMON_TLDS.has(tld)) {
+          score += 10;
+          signals.push({ signal: 'tld', weight: 10, detail: `Uncommon TLD .${tld}.` });
+        }
+
+        if (totalObservations <= 1) {
+          score += 5;
+          signals.push({ signal: 'rare_observation', weight: 5, detail: 'Observed only once.' });
+        } else if (totalObservations >= 10) {
+          score -= 5;
+          signals.push({ signal: 'common_observation', weight: -5, detail: 'Seen frequently in capture.' });
+        }
+
+        if (counts.dns === 0 && counts.sni > 0) {
+          score += 8;
+          signals.push({
+            signal: 'no_dns',
+            weight: 8,
+            detail: 'Seen via TLS SNI but no matching DNS query in capture.',
+          });
+        }
+
+        if (ruleFlags.size > 0) {
+          score += 12;
+          signals.push({
+            signal: 'rule_flags',
+            weight: 12,
+            detail: `Associated sessions flagged: ${Array.from(ruleFlags).join(', ')}.`,
+          });
+        }
+
+        score = Math.max(0, Math.min(100, Math.round(score)));
+        const verdict = score >= 60 ? 'high' : score >= 35 ? 'medium' : 'low';
+        const confidence =
+          totalObservations >= 10 || sessionRows.length >= 3
+            ? 'high'
+            : totalObservations >= 3 || sessionRows.length >= 1
+              ? 'medium'
+              : 'low';
+
+        return {
+          domain: normalized,
+          verdict,
+          score,
+          confidence,
+          method: 'heuristic-local',
+          signals,
+          observed: {
+            total: totalObservations,
+            dns: counts.dns,
+            sni: counts.sni,
+            http: counts.http,
+            sessions: sessionRows.length,
+            ips: Array.from(uniqueIps),
+            ports: Array.from(uniquePorts).sort((a, b) => a - b),
+            total_packets: totalPackets,
+            total_bytes: totalBytes,
+            first_seen: firstSeen,
+            last_seen: lastSeen,
+          },
+          sessions: include_sessions ? sessionRows.slice(0, 25) : undefined,
+          limitations: [
+            'Heuristic assessment only.',
+            'No external reputation or threat-intel sources used.',
+          ],
         };
       },
     }),
