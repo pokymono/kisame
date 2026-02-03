@@ -24,6 +24,7 @@ export type AppShellRefs = {
   explorerEmptyState: HTMLElement;
   explorerAddButton: HTMLButtonElement;
   explorerRefreshButton: HTMLButtonElement;
+  uploadIndicator: HTMLElement;
   chatMessages: HTMLElement;
   chatEmptyState: HTMLElement;
   chatInput: HTMLInputElement;
@@ -137,6 +138,11 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   const badgeText = el('span', { text: 'NO CAPTURE', className: 'truncate' });
   captureBadge.append(badgeIcon, badgeText);
 
+  const uploadIndicator = el('div', {
+    className: 'upload-indicator hidden',
+    text: '',
+  });
+
   const openPcapButton = el('button', {
     className: 'cyber-btn px-4 py-1.5 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.2em] text-[var(--accent-cyan)] uppercase',
     text: '◈ OPEN PCAP',
@@ -147,7 +153,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     text: '◈ LIVE CAPTURE',
   }) as HTMLButtonElement;
 
-  topRight.append(statusDot, captureBadge);
+  topRight.append(statusDot, uploadIndicator, captureBadge);
   topBar.append(topLeft, topRight);
 
   // Main content grid - responsive with proper overflow
@@ -721,6 +727,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     explorerEmptyState: emptyState,
     explorerAddButton,
     explorerRefreshButton,
+    uploadIndicator,
     chatMessages,
     chatEmptyState,
     chatInput,

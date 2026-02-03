@@ -76,8 +76,15 @@ async function initApp() {
   };
 
   let explorerCaptures: ExplorerCapture[] = [];
+  let uploadIndicatorTimer: number | null = null;
 
   void refreshExplorerCaptures();
+
+  if (window.electronAPI?.onUploadProgress) {
+    window.electronAPI.onUploadProgress((event) => {
+      renderUploadIndicator(event);
+    });
+  }
 
   const formatTimestamp = (ts?: number | null) => {
     if (!ts) return '—';
@@ -89,6 +96,60 @@ async function initApp() {
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${bytes} B`;
   };
+
+  function renderUploadIndicator(event: {
+    stage: 'idle' | 'upload' | 'analyze' | 'done' | 'error';
+    loaded?: number;
+    total?: number;
+    percent?: number;
+    message?: string;
+  }) {
+    if (uploadIndicatorTimer) {
+      window.clearTimeout(uploadIndicatorTimer);
+      uploadIndicatorTimer = null;
+    }
+
+    if (event.stage === 'idle' || event.stage === 'done') {
+      ui.uploadIndicator.classList.add('hidden');
+      ui.uploadIndicator.classList.remove('active');
+      ui.uploadIndicator.textContent = '';
+      return;
+    }
+
+    ui.uploadIndicator.classList.remove('hidden');
+    ui.uploadIndicator.classList.add('active');
+
+    if (event.stage === 'upload') {
+      const percent =
+        typeof event.percent === 'number'
+          ? Math.max(0, Math.min(100, event.percent))
+          : event.total
+            ? Math.min(100, Math.round(((event.loaded ?? 0) / event.total) * 100))
+            : 0;
+      const blocks = 10;
+      const filled = Math.min(blocks, Math.max(0, Math.round((percent / 100) * blocks)));
+      const bar = `█`.repeat(filled) + `░`.repeat(blocks - filled);
+      ui.uploadIndicator.textContent = `UPLOAD [${bar}] ${percent}%`;
+      return;
+    }
+
+    if (event.stage === 'analyze') {
+      ui.uploadIndicator.textContent = 'ANALYZE █░█░█░';
+      return;
+    }
+
+    if (event.stage === 'error') {
+      ui.uploadIndicator.textContent = 'ERROR █░█░█░';
+      uploadIndicatorTimer = window.setTimeout(() => {
+        ui.uploadIndicator.classList.add('hidden');
+        ui.uploadIndicator.classList.remove('active');
+        ui.uploadIndicator.textContent = '';
+      }, 3000);
+      return;
+    }
+
+    ui.uploadIndicator.textContent = event.message ?? 'WORKING █░█░█░';
+  }
 
   function setExplorerEmptyState(title: string, subtitle: string) {
     const titleEl = ui.explorerEmptyState.querySelector('[data-explorer-empty-title]') as HTMLElement | null;
@@ -169,7 +230,22 @@ async function initApp() {
     }
   }
 
+  async function ensureBackendTsharkAvailable() {
+    const res = await fetch(`${explanationBaseUrl}/tshark/version`);
+    if (!res.ok) {
+      const msg = await res.text().catch(() => '');
+      throw new Error(`Backend tshark check failed (${res.status}). ${msg}`);
+    }
+    const data = (await res.json()) as { resolved?: boolean };
+    if (!data?.resolved) {
+      throw new Error(
+        `Backend at ${explanationBaseUrl} is missing tshark. Install Wireshark/tshark on the backend VM or set TSHARK_PATH. You can run scripts/setup-backend.sh on the VM.`
+      );
+    }
+  }
+
   async function analyzeExplorerCapture(sessionId: string) {
+    await ensureBackendTsharkAvailable();
     const res = await fetch(`${explanationBaseUrl}/tools/analyzePcap`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
