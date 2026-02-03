@@ -1,9 +1,45 @@
+import { existsSync, readdirSync, statSync } from 'fs';
 import type { PcapSession } from '../types';
 import { ensureDir, getPcapDir } from '../utils/fs';
 import { utcNowIso } from '../utils/response';
 import { logInfo } from '../utils/logger';
 
 const sessions = new Map<string, PcapSession>();
+
+function hydrateSessionsFromDisk(): void {
+  const pcapDir = getPcapDir();
+  if (!existsSync(pcapDir)) return;
+
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(pcapDir);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.endsWith('.pcap') && !entry.endsWith('.pcapng')) continue;
+    const dashIndex = entry.indexOf('-');
+    if (dashIndex <= 0) continue;
+    const id = entry.slice(0, dashIndex);
+    if (sessions.has(id)) continue;
+
+    const filePath = `${pcapDir}/${entry}`;
+    try {
+      const stats = statSync(filePath);
+      const fileName = entry.slice(dashIndex + 1);
+      sessions.set(id, {
+        id,
+        fileName,
+        filePath,
+        createdAt: stats.mtime.toISOString(),
+        sizeBytes: stats.size,
+      });
+    } catch {
+      // Ignore files we cannot stat.
+    }
+  }
+}
 
 export async function initPcapStorage(): Promise<void> {
   const pcapDir = getPcapDir();
@@ -55,9 +91,15 @@ export async function registerPcapFile(opts: {
 }
 
 export function getSession(id: string): PcapSession | undefined {
-  return sessions.get(id);
+  let session = sessions.get(id);
+  if (!session) {
+    hydrateSessionsFromDisk();
+    session = sessions.get(id);
+  }
+  return session;
 }
 
 export function listSessions(): PcapSession[] {
+  hydrateSessionsFromDisk();
   return Array.from(sessions.values());
 }
