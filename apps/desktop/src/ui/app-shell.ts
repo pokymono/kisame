@@ -1,0 +1,565 @@
+import { el } from './dom';
+import { iconArrowRight, iconFolder, iconSessions, iconTimeline, iconShark, iconRadar, iconTerminal, iconWave, iconHex, iconShield } from './icons';
+
+export type AppShellRefs = {
+  root: HTMLElement;
+  navCaptureButton: HTMLButtonElement;
+  navAnalyzeButton: HTMLButtonElement;
+  navExportButton: HTMLButtonElement;
+  openPcapButton: HTMLButtonElement;
+  liveCaptureButton: HTMLButtonElement;
+  liveCaptureStatus: HTMLElement;
+  captureBadge: HTMLElement;
+  capturePanel: HTMLElement;
+  exportPanel: HTMLElement;
+  centerTop: HTMLElement;
+  evidenceRow: HTMLElement;
+  chatColumn: HTMLElement;
+  sessionsList: HTMLElement;
+  timelineList: HTMLElement;
+  analysisSummary: HTMLElement;
+  analysisDetail: HTMLElement;
+  evidenceList: HTMLElement;
+  chatMessages: HTMLElement;
+  chatEmptyState: HTMLElement;
+  chatInput: HTMLInputElement;
+  chatSendBtn: HTMLButtonElement;
+  sessionIdLabel: HTMLElement;
+  selectedEvidenceLabel: HTMLElement;
+  welcomePanel: HTMLElement;
+};
+
+export function createAppShell(root: HTMLElement): AppShellRefs {
+  const app = el('div', {
+    className: 'relative h-screen w-screen overflow-hidden app-surface',
+  });
+
+  const bgEffects = el('div', {
+    className: 'pointer-events-none absolute inset-0',
+  });
+  
+  const gridBg = el('div', {
+    className: 'absolute inset-0 app-grid-bg opacity-30',
+  });
+
+  const noise = el('div', {
+    className: 'absolute inset-0 app-noise',
+  });
+
+  const scanlines = el('div', {
+    className: 'absolute inset-0 app-scanlines opacity-20',
+  });
+
+  const glowOrb1 = el('div', {
+    className: 'absolute -top-40 -left-40 w-96 h-96 rounded-full blur-3xl opacity-10',
+    attrs: { style: 'background: radial-gradient(circle, var(--accent-cyan) 0%, transparent 70%);' }
+  });
+
+  const glowOrb2 = el('div', {
+    className: 'absolute -bottom-40 -right-40 w-80 h-80 rounded-full blur-3xl opacity-8',
+    attrs: { style: 'background: radial-gradient(circle, var(--accent-teal) 0%, transparent 70%);' }
+  });
+
+  bgEffects.append(gridBg, noise, scanlines, glowOrb1, glowOrb2);
+
+  const topBar = el('div', {
+    className: 'relative z-10 h-9 flex items-center justify-between px-4 border-b border-[var(--app-line-strong)] bg-gradient-to-r from-[var(--app-surface)] via-[var(--app-bg)] to-[var(--app-surface)] overflow-hidden',
+  });
+
+  const topLeft = el('div', { className: 'flex items-center gap-4 min-w-0 flex-shrink-0' });
+  
+  const brandGroup = el('div', { className: 'flex items-center gap-2' });
+  const sharkIcon = iconShark();
+  sharkIcon.classList.add('size-5', 'text-[var(--accent-cyan)]');
+  
+  const brand = el('div', {
+    className: 'font-[var(--font-display)] text-sm font-bold tracking-[0.25em] text-[var(--accent-cyan)] glow-text-cyan uppercase',
+    text: 'KISAME',
+  });
+  
+  const versionBadge = el('div', {
+    className: 'ml-2 px-1.5 py-0.5 text-[8px] font-[var(--font-mono)] tracking-wider text-[var(--accent-teal)] border border-[var(--accent-teal)]/30 rounded',
+    text: 'v1.0',
+  });
+  
+  brandGroup.append(sharkIcon, brand, versionBadge);
+
+  const navItems = el('div', { className: 'flex items-center gap-1' });
+  const tabButtonBase =
+    'px-3 py-1 text-[10px] font-[var(--font-display)] tracking-[0.2em] transition-all rounded';
+  const tabActiveClass =
+    `${tabButtonBase} text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/30`;
+  const tabInactiveClass = `${tabButtonBase} text-white/50 hover:text-white/80`;
+
+  const navCaptureButton = el('button', {
+    className: tabInactiveClass,
+    text: 'CAPTURE',
+    attrs: { type: 'button', 'data-tab': 'capture' },
+  }) as HTMLButtonElement;
+  const navAnalyzeButton = el('button', {
+    className: tabActiveClass,
+    text: 'ANALYZE',
+    attrs: { type: 'button', 'data-tab': 'analyze' },
+  }) as HTMLButtonElement;
+  const navExportButton = el('button', {
+    className: tabInactiveClass,
+    text: 'EXPORT',
+    attrs: { type: 'button', 'data-tab': 'export' },
+  }) as HTMLButtonElement;
+
+  navItems.append(navCaptureButton, navAnalyzeButton, navExportButton);
+
+  topLeft.append(brandGroup, navItems);
+
+  const topRight = el('div', { className: 'flex items-center gap-3 min-w-0 flex-shrink-0' });
+
+  const statusDot = el('div', {
+    className: 'flex items-center gap-2',
+  });
+  const dot = el('div', {
+    className: 'size-2 rounded-full bg-[var(--accent-teal)] pulse-dot',
+  });
+  const statusText = el('span', {
+    className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-white/40 uppercase',
+    text: 'SYSTEM READY',
+  });
+  statusDot.append(dot, statusText);
+
+  const captureBadge = el('div', {
+    className: 'flex items-center gap-2 px-3 py-1 text-[10px] font-[var(--font-mono)] tracking-[0.15em] text-white/50 border border-[var(--app-line)] rounded bg-[var(--app-surface)] max-w-[180px] overflow-hidden',
+  });
+  const badgeIcon = iconHex();
+  badgeIcon.classList.add('size-3', 'text-white/30', 'flex-shrink-0');
+  const badgeText = el('span', { text: 'NO CAPTURE', className: 'truncate' });
+  captureBadge.append(badgeIcon, badgeText);
+
+  const openPcapButton = el('button', {
+    className: 'cyber-btn px-4 py-1.5 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.2em] text-[var(--accent-cyan)] uppercase',
+    text: '◈ OPEN PCAP',
+  }) as HTMLButtonElement;
+
+  const liveCaptureButton = el('button', {
+    className: 'cyber-btn px-4 py-1.5 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.2em] text-[var(--accent-teal)] uppercase',
+    text: '◈ LIVE CAPTURE',
+  }) as HTMLButtonElement;
+
+  topRight.append(statusDot, captureBadge);
+  topBar.append(topLeft, topRight);
+
+  // Main content grid - responsive with proper overflow
+  const body = el('div', {
+    className: 'relative z-10 grid h-[calc(100%-2.25rem)] overflow-hidden main-grid-responsive',
+    attrs: { style: 'grid-template-columns: 56px 280px minmax(0,1fr) minmax(0,1fr) 380px; grid-template-rows: 1fr 200px;' },
+  });
+
+  // Left navigation rail
+  const navRail = el('div', {
+    className: 'col-start-1 row-span-2 flex flex-col items-center justify-between py-4 border-r border-[var(--app-line)] bg-[var(--app-surface)]/50',
+  });
+
+  const navRailTop = el('div', { className: 'flex flex-col items-center gap-3' });
+  
+  const navButtons = [
+    { icon: iconRadar, active: true, label: 'Analysis' },
+    { icon: iconTerminal, active: false, label: 'Terminal' },
+    { icon: iconWave, active: false, label: 'Waveform' },
+  ];
+
+  navButtons.forEach(({ icon, active }) => {
+    const btn = el('button', {
+      className: `group relative size-9 rounded flex items-center justify-center transition-all ${active ? 'bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/40' : 'hover:bg-white/5 border border-transparent'}`,
+    });
+    const iconEl = icon();
+    iconEl.classList.add('size-4', active ? 'text-[var(--accent-cyan)]' : 'text-white/40', 'group-hover:text-white/70', 'transition-colors');
+    btn.append(iconEl);
+    navRailTop.append(btn);
+  });
+
+  const navRailBottom = el('div', { className: 'flex flex-col items-center gap-3' });
+  
+  const userAvatar = el('div', {
+    className: 'size-8 rounded-full bg-gradient-to-br from-[var(--accent-cyan)]/20 to-[var(--accent-teal)]/20 border border-[var(--app-line-strong)] flex items-center justify-center',
+  });
+  const userInitial = el('span', {
+    className: 'text-[10px] font-[var(--font-display)] font-bold text-white/60',
+    text: 'K',
+  });
+  userAvatar.append(userInitial);
+  
+  navRailBottom.append(userAvatar);
+  navRail.append(navRailTop, navRailBottom);
+
+  const sidebar = el('aside', {
+    className: 'col-start-2 row-span-2 flex flex-col border-r border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/80 to-transparent overflow-hidden min-w-0',
+  });
+
+  const sidebarHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-3 border-b border-[var(--app-line)]',
+  });
+  
+  const explorerTitle = el('div', { className: 'flex items-center gap-2' });
+  const folderIcon = iconFolder();
+  folderIcon.classList.add('size-4', 'text-[var(--accent-cyan)]');
+  const explorerLabel = el('span', {
+    className: 'section-label',
+    text: 'EXPLORER',
+  });
+  explorerTitle.append(folderIcon, explorerLabel);
+
+  const explorerActions = el('div', { className: 'flex items-center gap-1' });
+  ['+', '↻'].forEach(symbol => {
+    const btn = el('button', {
+      className: 'size-6 flex items-center justify-center text-white/30 hover:text-white/70 hover:bg-white/5 rounded transition-all text-xs',
+      text: symbol,
+    });
+    explorerActions.append(btn);
+  });
+
+  sidebarHeader.append(explorerTitle, explorerActions);
+
+  const folderRow = el('div', {
+    className: 'mx-3 mt-3 flex items-center gap-2 rounded px-3 py-2 bg-[var(--app-surface)] border border-[var(--app-line)] hover:border-[var(--app-line-strong)] transition-colors',
+  });
+  
+  const folderIconSmall = iconFolder();
+  folderIconSmall.classList.add('size-3.5', 'text-[var(--accent-cyan)]/70');
+  
+  const folderSelect = el('select', {
+    className: 'flex-1 bg-transparent text-[11px] font-[var(--font-mono)] tracking-wider text-white/70 focus:outline-none cursor-pointer',
+  }) as HTMLSelectElement;
+  folderSelect.append(new Option('DEFAULT WORKSPACE', 'default'));
+  
+  folderRow.append(folderIconSmall, folderSelect);
+
+  const fileList = el('div', {
+    className: 'flex-1 px-3 py-3 text-xs space-y-1 overflow-y-auto',
+  });
+
+  const emptyState = el('div', {
+    className: 'flex flex-col items-center justify-center py-8 text-center',
+  });
+  const emptyIcon = iconHex();
+  emptyIcon.classList.add('size-8', 'text-white/10', 'mb-3');
+  emptyState.append(
+    emptyIcon,
+    el('div', { className: 'data-label mb-1', text: 'NO FILES' }),
+    el('div', { className: 'text-[10px] text-white/30 leading-relaxed', text: 'Open a PCAP file to begin forensic analysis' })
+  );
+  fileList.append(emptyState);
+
+  sidebar.append(sidebarHeader, folderRow, fileList);
+
+  const centerTop = el('div', {
+    className: 'col-start-3 col-span-2 row-start-1 grid grid-cols-2 overflow-hidden relative',
+  });
+
+  const sessionsColumn = el('section', {
+    className: 'flex min-w-0 flex-col overflow-hidden border-r border-[var(--app-line)] hide-on-small',
+  });
+
+  const sessionsHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+  
+  const sessionsTitle = el('div', { className: 'flex items-center gap-2' });
+  const sessionsIcon = iconSessions();
+  sessionsIcon.classList.add('size-4', 'text-[var(--accent-cyan)]');
+  sessionsTitle.append(
+    sessionsIcon,
+    el('span', { className: 'section-label', text: 'SESSIONS' })
+  );
+
+  const sessionsCount = el('div', {
+    className: 'px-2 py-0.5 text-[9px] font-[var(--font-mono)] text-white/30 bg-white/5 rounded',
+    text: '0',
+  });
+
+  sessionsHeader.append(sessionsTitle, sessionsCount);
+
+  const sessionsList = el('div', {
+    className: 'flex-1 overflow-y-auto px-3 py-3 space-y-2',
+  });
+
+  sessionsColumn.append(sessionsHeader, sessionsList);
+
+  const timelineColumn = el('section', {
+    className: 'flex min-w-0 flex-col overflow-hidden',
+  });
+
+  const timelineHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+  
+  const timelineTitle = el('div', { className: 'flex items-center gap-2' });
+  const timelineIcon = iconTimeline();
+  timelineIcon.classList.add('size-4', 'text-[var(--accent-teal)]');
+  timelineTitle.append(
+    timelineIcon,
+    el('span', { className: 'section-label', text: 'TIMELINE' })
+  );
+
+  const sessionIdLabel = el('div', {
+    className: 'data-label truncate max-w-[150px]',
+    text: 'SESSION: —',
+  });
+
+  timelineHeader.append(timelineTitle, sessionIdLabel);
+
+  const timelineList = el('div', {
+    className: 'flex-1 overflow-y-auto px-3 py-3 space-y-2',
+  });
+
+  timelineColumn.append(timelineHeader, timelineList);
+
+  // Welcome panel overlay
+  const welcomePanel = el('div', {
+    className: 'absolute inset-0 flex items-center justify-center app-welcome-bg pointer-events-none z-10',
+  });
+
+  const welcomeContent = el('div', {
+    className: 'relative max-w-2xl text-center px-8',
+  });
+
+  // Decorative hex grid behind welcome
+  const hexGrid = el('div', {
+    className: 'absolute inset-0 flex items-center justify-center opacity-5',
+  });
+  for (let i = 0; i < 6; i++) {
+    const hex = el('div', {
+      className: 'absolute w-32 h-32 border border-[var(--accent-cyan)] rotate-45',
+      attrs: { style: `transform: rotate(${i * 15}deg) scale(${1 + i * 0.3});` }
+    });
+    hexGrid.append(hex);
+  }
+
+  const welcomeLogo = el('div', {
+    className: 'flex items-center justify-center gap-4 mb-8',
+  });
+  const bigShark = iconShark();
+  bigShark.classList.add('size-16', 'text-[var(--accent-cyan)]', 'opacity-80');
+  welcomeLogo.append(bigShark);
+
+  const welcomeTitle = el('div', {
+    className: 'font-[var(--font-display)] text-5xl font-black tracking-[0.35em] text-white/90 mb-4 glow-text-cyan',
+    text: 'KISAME',
+  });
+
+  const welcomeSubtitle = el('div', {
+    className: 'font-[var(--font-display)] text-sm font-medium tracking-[0.4em] text-[var(--accent-cyan)] mb-8 uppercase',
+    text: 'NETWORK FORENSICS ENGINE',
+  });
+
+  const welcomeBody = el('div', {
+    className: 'text-base leading-relaxed text-white/50 max-w-md mx-auto mb-10',
+    text: 'Load a PCAP capture to begin deep packet inspection, session correlation, and AI-powered forensic analysis.',
+  });
+
+  const accentBar = el('div', {
+    className: 'relative h-1 mx-auto w-48 overflow-hidden',
+  });
+  const accentFill = el('div', {
+    className: 'absolute inset-y-0 left-0 w-1/2 bg-gradient-to-r from-[var(--accent-cyan)] to-[var(--accent-teal)]',
+    attrs: { style: 'animation: slideRight 3s ease-in-out infinite alternate;' }
+  });
+  accentBar.innerHTML = `
+    <style>
+      @keyframes slideRight {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(200%); }
+      }
+    </style>
+  `;
+  accentBar.append(accentFill);
+
+  const statsRow = el('div', {
+    className: 'flex items-center justify-center gap-8 mt-10',
+  });
+
+  const stats = [
+    { label: 'PROTOCOLS', value: '—' },
+    { label: 'SESSIONS', value: '—' },
+    { label: 'PACKETS', value: '—' },
+  ];
+
+  stats.forEach(stat => {
+    const statBox = el('div', { className: 'text-center' });
+    statBox.append(
+      el('div', { className: 'font-[var(--font-display)] text-2xl font-bold text-white/30 mb-1', text: stat.value }),
+      el('div', { className: 'data-label', text: stat.label })
+    );
+    statsRow.append(statBox);
+  });
+
+  welcomeContent.append(hexGrid, welcomeLogo, welcomeTitle, welcomeSubtitle, welcomeBody, accentBar, statsRow);
+  welcomePanel.append(welcomeContent);
+
+  centerTop.append(sessionsColumn, timelineColumn, welcomePanel);
+
+  const evidenceRow = el('section', {
+    className: 'col-start-3 col-span-2 row-start-2 flex min-w-0 flex-col overflow-hidden border-t border-[var(--app-line)]',
+  });
+
+  const evidenceHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+
+  const evidenceTitle = el('div', { className: 'flex items-center gap-2' });
+  const shieldIcon = iconShield();
+  shieldIcon.classList.add('size-4', 'text-[var(--accent-amber)]');
+  evidenceTitle.append(
+    shieldIcon,
+    el('span', { className: 'section-label', text: 'EVIDENCE' })
+  );
+
+  const selectedEvidenceLabel = el('div', {
+    className: 'data-label truncate max-w-[150px]',
+    text: 'SELECTED: —',
+  });
+
+  evidenceHeader.append(evidenceTitle, selectedEvidenceLabel);
+
+  const evidenceList = el('div', {
+    className: 'flex-1 overflow-auto px-4 py-3 text-xs text-white/60',
+  });
+
+  evidenceRow.append(evidenceHeader, evidenceList);
+
+  const chatColumn = el('aside', {
+    className: 'col-start-5 row-span-2 flex min-w-0 flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/50 to-transparent',
+  });
+
+  const analysisPanel = el('div', {
+    className: 'hidden border-b border-[var(--app-line)] px-4 py-4 space-y-3',
+  });
+  const analysisLabel = el('div', {
+    className: 'section-label',
+    text: 'ANALYSIS',
+  });
+  const analysisSummary = el('div', {
+    className: 'text-sm text-white/80 leading-relaxed',
+  });
+  const analysisDetail = el('div', {
+    className: 'text-xs text-white/60 leading-relaxed',
+  });
+  analysisPanel.append(analysisLabel, analysisSummary, analysisDetail);
+
+  const chatHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-3 border-b border-[var(--app-line)]',
+  });
+
+  const chatTitle = el('div', { className: 'flex items-center gap-2' });
+  const termIcon = iconTerminal();
+  termIcon.classList.add('size-4', 'text-[var(--accent-purple)]');
+  chatTitle.append(
+    termIcon,
+    el('span', { className: 'section-label', text: 'AI ANALYST' })
+  );
+
+  const chatStatus = el('div', {
+    className: 'flex items-center gap-2 px-2 py-1 rounded bg-[var(--accent-teal)]/10 border border-[var(--accent-teal)]/20',
+  });
+  const chatDot = el('div', { className: 'size-1.5 rounded-full bg-[var(--accent-teal)] pulse-dot' });
+  const chatStatusText = el('span', {
+    className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-[var(--accent-teal)] uppercase',
+    text: 'ONLINE',
+  });
+  chatStatus.append(chatDot, chatStatusText);
+
+  chatHeader.append(chatTitle, chatStatus);
+
+  const chatBody = el('div', {
+    className: 'relative flex-1 min-h-0 overflow-hidden',
+  });
+
+  const chatEmptyState = el('div', {
+    className: 'pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center px-6',
+  });
+
+  const emptyVisual = el('div', {
+    className: 'relative mb-6',
+  });
+  const emptyCircle = el('div', {
+    className: 'size-20 rounded-full border-2 border-dashed border-[var(--accent-cyan)]/20 flex items-center justify-center',
+  });
+  const emptyInner = el('div', {
+    className: 'size-12 rounded-full bg-gradient-to-br from-[var(--accent-cyan)]/10 to-[var(--accent-purple)]/10 flex items-center justify-center',
+  });
+  const aiIcon = iconTerminal();
+  aiIcon.classList.add('size-5', 'text-[var(--accent-cyan)]/50');
+  emptyInner.append(aiIcon);
+  emptyCircle.append(emptyInner);
+  emptyVisual.append(emptyCircle);
+
+  chatEmptyState.append(
+    emptyVisual,
+    el('div', {
+      className: 'font-[var(--font-display)] text-base font-semibold tracking-[0.2em] text-white/70 uppercase mb-2',
+      text: 'FORENSIC AI',
+    }),
+    el('div', {
+      className: 'text-[11px] font-[var(--font-mono)] tracking-wider text-white/30 uppercase leading-relaxed',
+      text: 'Ask questions about sessions, protocols, or suspicious activity',
+    })
+  );
+
+  const chatMessages = el('div', {
+    className: 'absolute inset-0 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-4',
+  });
+
+  chatBody.append(chatEmptyState, chatMessages);
+
+  const chatInputRow = el('div', {
+    className: 'px-3 py-3 border-t border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+
+  const chatInputWrap = el('div', {
+    className: 'relative flex items-center gap-2 rounded-lg bg-[var(--app-bg)] border border-[var(--app-line)] focus-within:border-[var(--accent-cyan)]/50 focus-within:shadow-[0_0_20px_rgba(0,240,255,0.1)] transition-all',
+  });
+
+  const inputIcon = el('div', {
+    className: 'pl-3 text-white/20',
+    text: '›',
+  });
+
+  const chatInput = el('input', {
+    className: 'flex-1 min-w-0 bg-transparent py-3 text-sm font-[var(--font-ui)] text-white/90 placeholder:text-white/25 focus:outline-none',
+    attrs: { 
+      type: 'text', 
+      placeholder: 'Query the AI analyst...',
+      spellcheck: 'false',
+    },
+  }) as HTMLInputElement;
+
+  const chatSendBtn = el('button', {
+    className: 'mr-1 cyber-btn px-4 py-2 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.15em] text-[var(--accent-cyan)] uppercase',
+    text: 'SEND',
+  }) as HTMLButtonElement;
+
+  chatInputWrap.append(inputIcon, chatInput, chatSendBtn);
+  chatInputRow.append(chatInputWrap);
+
+  chatColumn.append(analysisPanel, chatHeader, chatBody, chatInputRow);
+
+  body.append(navRail, sidebar, centerTop, evidenceRow, chatColumn);
+  app.append(bgEffects, topBar, body);
+  root.replaceChildren(app);
+
+  return {
+    root: app,
+    openPcapButton,
+    liveCaptureButton,
+    captureBadge: badgeText,
+    sessionsList,
+    timelineList,
+    analysisSummary,
+    analysisDetail,
+    evidenceList,
+    chatMessages,
+    chatEmptyState,
+    chatInput,
+    chatSendBtn,
+    sessionIdLabel,
+    selectedEvidenceLabel,
+    welcomePanel,
+  };
+}

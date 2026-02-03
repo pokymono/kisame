@@ -1,6 +1,9 @@
-/**
- * Routes module exports
- */
 export { handleHealth } from './health';
 export { handleTsharkVersion, handlePcapUpload, handlePcapGet, handleAnalyzePcap, handleExplainSession } from './pcap';
-export { handleChat } from './chat';
+export {
+  handleListCaptureInterfaces,
+  handleStartLiveCapture,
+  handleStopLiveCapture,
+  handleGetLiveCapture,
+} from './live-capture';
+export { handleChat, handleChatStream } from './chat';

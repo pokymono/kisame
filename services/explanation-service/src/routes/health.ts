@@ -1,6 +1,3 @@
-/**
- * Health check route handler
- */
 import { json } from '../utils/response';
 
 export function handleHealth(port: number): Response {

@@ -1,6 +1,3 @@
-/**
- * File system utilities using Node.js fs/promises (compatible with Bun)
- */
 import { mkdir } from 'fs/promises';
 
 export async function ensureDir(dirPath: string): Promise<void> {
