@@ -1,5 +1,5 @@
 import { json } from '../utils/response';
-import { storePcap, getSession, analyzeWithTshark, getTsharkInfo, explainSession } from '../pcap';
+import { storePcap, getSession, listSessions, analyzeWithTshark, getTsharkInfo, explainSession } from '../pcap';
 import type { AnalysisArtifact } from '../types';
 
 export async function handleTsharkVersion(): Promise<Response> {
@@ -30,6 +30,19 @@ export function handlePcapGet(sessionId: string): Response {
     file_name: session.fileName,
     size_bytes: session.sizeBytes,
     created_at: session.createdAt,
+  });
+}
+
+export function handlePcapList(): Response {
+  const sessions = listSessions();
+  return json({
+    total: sessions.length,
+    sessions: sessions.map((session) => ({
+      session_id: session.id,
+      file_name: session.fileName,
+      size_bytes: session.sizeBytes,
+      created_at: session.createdAt,
+    })),
   });
 }
 

@@ -5,6 +5,7 @@ import {
   handleTsharkVersion,
   handlePcapUpload,
   handlePcapGet,
+  handlePcapList,
   handleAnalyzePcap,
   handleExplainSession,
   handleListCaptureInterfaces,
@@ -39,6 +40,10 @@ async function handleRequest(req: Request): Promise<Response> {
 
   if (method === 'POST' && pathname === '/pcap') {
     return handlePcapUpload(req);
+  }
+
+  if (method === 'GET' && pathname === '/pcap/list') {
+    return handlePcapList();
   }
 
   if (method === 'GET' && pathname === '/capture/interfaces') {

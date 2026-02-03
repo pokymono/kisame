@@ -20,6 +20,10 @@ export type AppShellRefs = {
   analysisSummary: HTMLElement;
   analysisDetail: HTMLElement;
   evidenceList: HTMLElement;
+  explorerList: HTMLElement;
+  explorerEmptyState: HTMLElement;
+  explorerAddButton: HTMLButtonElement;
+  explorerRefreshButton: HTMLButtonElement;
   chatMessages: HTMLElement;
   chatEmptyState: HTMLElement;
   chatInput: HTMLInputElement;
@@ -207,13 +211,19 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   explorerTitle.append(folderIcon, explorerLabel);
 
   const explorerActions = el('div', { className: 'flex items-center gap-1' });
-  ['+', '↻'].forEach(symbol => {
-    const btn = el('button', {
-      className: 'size-6 flex items-center justify-center text-white/30 hover:text-white/70 hover:bg-white/5 rounded transition-all text-xs',
-      text: symbol,
-    });
-    explorerActions.append(btn);
-  });
+  const explorerAddButton = el('button', {
+    className:
+      'size-6 flex items-center justify-center text-white/30 hover:text-white/70 hover:bg-white/5 rounded transition-all text-xs',
+    text: '+',
+    attrs: { type: 'button', 'aria-label': 'Add capture' },
+  }) as HTMLButtonElement;
+  const explorerRefreshButton = el('button', {
+    className:
+      'size-6 flex items-center justify-center text-white/30 hover:text-white/70 hover:bg-white/5 rounded transition-all text-xs',
+    text: '↻',
+    attrs: { type: 'button', 'aria-label': 'Refresh captures' },
+  }) as HTMLButtonElement;
+  explorerActions.append(explorerAddButton, explorerRefreshButton);
 
   sidebarHeader.append(explorerTitle, explorerActions);
 
@@ -228,6 +238,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'flex-1 bg-transparent text-[11px] font-[var(--font-mono)] tracking-wider text-white/70 focus:outline-none cursor-pointer',
   }) as HTMLSelectElement;
   folderSelect.append(new Option('DEFAULT WORKSPACE', 'default'));
+  folderSelect.disabled = true;
   
   folderRow.append(folderIconSmall, folderSelect);
 
@@ -240,11 +251,17 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   });
   const emptyIcon = iconHex();
   emptyIcon.classList.add('size-8', 'text-white/10', 'mb-3');
-  emptyState.append(
-    emptyIcon,
-    el('div', { className: 'data-label mb-1', text: 'NO FILES' }),
-    el('div', { className: 'text-[10px] text-white/30 leading-relaxed', text: 'Open a PCAP file to begin forensic analysis' })
-  );
+  const emptyTitle = el('div', {
+    className: 'data-label mb-1',
+    text: 'NO FILES',
+    attrs: { 'data-explorer-empty-title': 'true' },
+  });
+  const emptySubtitle = el('div', {
+    className: 'text-[10px] text-white/30 leading-relaxed',
+    text: 'Open a PCAP file to begin forensic analysis',
+    attrs: { 'data-explorer-empty-subtitle': 'true' },
+  });
+  emptyState.append(emptyIcon, emptyTitle, emptySubtitle);
   fileList.append(emptyState);
 
   sidebar.append(sidebarHeader, folderRow, fileList);
@@ -700,6 +717,10 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     analysisSummary,
     analysisDetail,
     evidenceList,
+    explorerList: fileList,
+    explorerEmptyState: emptyState,
+    explorerAddButton,
+    explorerRefreshButton,
     chatMessages,
     chatEmptyState,
     chatInput,

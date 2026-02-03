@@ -15,6 +15,7 @@ async function initApp() {
   let liveCaptureId: string | null = null;
   let liveCaptureInterface: string | null = null;
   let lastAnalysisRef: AnalysisArtifact | null = null;
+  let captureSessionId: string | null = null;
 
   type AppTab = 'capture' | 'analyze' | 'export';
   let activeTab: AppTab = 'analyze';
@@ -65,6 +66,18 @@ async function initApp() {
   });
 
   const sessionElements = new Map<string, HTMLElement>();
+  const explorerElements = new Map<string, HTMLElement>();
+
+  type ExplorerCapture = {
+    session_id: string;
+    file_name: string;
+    size_bytes: number;
+    created_at: string;
+  };
+
+  let explorerCaptures: ExplorerCapture[] = [];
+
+  void refreshExplorerCaptures();
 
   const formatTimestamp = (ts?: number | null) => {
     if (!ts) return '—';
@@ -76,6 +89,102 @@ async function initApp() {
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${bytes} B`;
   };
+
+  function setExplorerEmptyState(title: string, subtitle: string) {
+    const titleEl = ui.explorerEmptyState.querySelector('[data-explorer-empty-title]') as HTMLElement | null;
+    const subtitleEl = ui.explorerEmptyState.querySelector('[data-explorer-empty-subtitle]') as HTMLElement | null;
+    if (titleEl) titleEl.textContent = title;
+    if (subtitleEl) subtitleEl.textContent = subtitle;
+  }
+
+  function updateExplorerSelection() {
+    for (const [id, element] of explorerElements) {
+      element.classList.toggle('selected', id === captureSessionId);
+    }
+  }
+
+  function renderExplorerCaptures() {
+    explorerElements.clear();
+
+    if (!explorerCaptures.length) {
+      ui.explorerList.replaceChildren(ui.explorerEmptyState);
+      return;
+    }
+
+    const rows = explorerCaptures.map((capture) => {
+      const row = el('button', {
+        className: 'w-full rounded px-3 py-2 text-left transition-all data-card',
+        attrs: { type: 'button', 'data-capture-id': capture.session_id },
+      });
+
+      const header = el('div', { className: 'flex items-center justify-between' });
+      const name = el('div', {
+        className: 'text-[11px] font-[var(--font-mono)] text-white/80 truncate',
+        text: capture.file_name,
+      });
+      const size = el('div', {
+        className: 'text-[9px] font-[var(--font-mono)] text-white/35',
+        text: formatBytes(capture.size_bytes ?? 0),
+      });
+      header.append(name, size);
+
+      const meta = el('div', {
+        className: 'mt-1 text-[9px] font-[var(--font-mono)] text-white/30',
+        text: new Date(capture.created_at).toISOString().replace('T', ' ').replace('Z', 'Z'),
+      });
+
+      row.append(header, meta);
+      explorerElements.set(capture.session_id, row);
+      return row;
+    });
+
+    ui.explorerList.replaceChildren(...rows);
+    updateExplorerSelection();
+  }
+
+  async function refreshExplorerCaptures() {
+    try {
+      const res = await fetch(`${explanationBaseUrl}/pcap/list`);
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(`Explorer refresh failed (${res.status}). ${msg}`);
+      }
+      const data = (await res.json()) as { sessions?: ExplorerCapture[] };
+      explorerCaptures = Array.isArray(data.sessions) ? data.sessions : [];
+      explorerCaptures.sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      setExplorerEmptyState(
+        'NO FILES',
+        'Open a PCAP file to begin forensic analysis'
+      );
+      renderExplorerCaptures();
+    } catch {
+      explorerCaptures = [];
+      setExplorerEmptyState(
+        'BACKEND OFFLINE',
+        'Unable to fetch captures from the analysis service'
+      );
+      renderExplorerCaptures();
+    }
+  }
+
+  async function analyzeExplorerCapture(sessionId: string) {
+    const res = await fetch(`${explanationBaseUrl}/tools/analyzePcap`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId }),
+    });
+    if (!res.ok) {
+      const msg = await res.text().catch(() => '');
+      throw new Error(`Analyze failed (${res.status}). ${msg}`);
+    }
+    analysis = (await res.json()) as AnalysisArtifact;
+    captureSessionId = analysis.pcap?.session_id ?? sessionId;
+    selectedSessionId = null;
+    render();
+    setActiveTab('analyze');
+  }
 
   function setWelcomeVisible(visible: boolean) {
     ui.welcomePanel.classList.toggle('hidden', !visible);
@@ -126,6 +235,8 @@ async function initApp() {
     ui.evidenceList.replaceChildren();
     sessionElements.clear();
     lastAnalysisRef = null;
+    captureSessionId = null;
+    updateExplorerSelection();
     setWelcomeVisible(true);
   }
 
@@ -205,10 +316,12 @@ async function initApp() {
         throw new Error(`Analyze failed (${analyzeRes.status}). ${msg}`);
       }
       analysis = (await analyzeRes.json()) as AnalysisArtifact;
+      captureSessionId = analysis.pcap?.session_id ?? stopData.session_id;
       selectedSessionId = null;
       stoppedOk = true;
       render();
       setActiveTab('analyze');
+      void refreshExplorerCaptures();
     } catch (err) {
       ui.captureBadge.textContent = liveCaptureInterface
         ? `Live: ${liveCaptureInterface}`
@@ -452,6 +565,8 @@ async function initApp() {
     ui.captureBadge.textContent = analysis.pcap?.file_name
       ? `${analysis.pcap.file_name} (${analysis.pcap.packets_analyzed ?? 0} pkts)`
       : 'Capture loaded';
+    captureSessionId = analysis.pcap?.session_id ?? captureSessionId;
+    updateExplorerSelection();
 
     if (analysis !== lastAnalysisRef) {
       renderSessions(analysis.sessions);
@@ -471,6 +586,33 @@ async function initApp() {
     updateSelectedSessionUI();
   });
 
+  ui.explorerList.addEventListener('click', async (event) => {
+    const target = event.target as HTMLElement | null;
+    const row = target?.closest('[data-capture-id]') as HTMLElement | null;
+    const id = row?.getAttribute('data-capture-id');
+    if (!id) return;
+    if (id === captureSessionId && analysis) {
+      setActiveTab('analyze');
+      return;
+    }
+    try {
+      row?.classList.add('opacity-60');
+      await analyzeExplorerCapture(id);
+    } catch (err) {
+      alert((err as Error).message ?? String(err));
+    } finally {
+      row?.classList.remove('opacity-60');
+    }
+  });
+
+  ui.explorerAddButton.addEventListener('click', () => {
+    ui.openPcapButton.click();
+  });
+
+  ui.explorerRefreshButton.addEventListener('click', () => {
+    void refreshExplorerCaptures();
+  });
+
   ui.openPcapButton.addEventListener('click', async () => {
     if (!window.electronAPI?.openPcapAndAnalyze) return;
     ui.openPcapButton.disabled = true;
@@ -480,9 +622,11 @@ async function initApp() {
       const result = await window.electronAPI.openPcapAndAnalyze();
       if (result.canceled) return;
       analysis = result.analysis as AnalysisArtifact;
+      captureSessionId = analysis.pcap?.session_id ?? null;
       selectedSessionId = null;
       render();
       setActiveTab('analyze');
+      void refreshExplorerCaptures();
     } catch (err) {
       console.error(err);
       alert((err as Error).message ?? String(err));
@@ -543,10 +687,16 @@ async function initApp() {
 
       const handleEvent = (eventName: string, data: any) => {
         if (eventName === 'status') {
+          // Filter out token/step messages - only show meaningful status
+          const stage = (data.stage ?? '').toLowerCase();
+          const msg = (data.message ?? '').toLowerCase();
+          if (stage.includes('step') || msg.includes('token') || stage === 'warning' || stage === 'reasoning') {
+            return; // Skip these status updates
+          }
           aiMessage.status = data.message ?? data.stage;
         } else if (eventName === 'text') {
           aiMessage.text += data.delta ?? '';
-          if (aiMessage.status && aiMessage.status.toLowerCase().includes('starting')) {
+          if (aiMessage.status) {
             aiMessage.status = undefined;
           }
         } else if (eventName === 'tool_call') {
