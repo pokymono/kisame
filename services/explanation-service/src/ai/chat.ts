@@ -3,6 +3,7 @@ import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
 import type { ChatContext, ChatQueryResponse, AnalysisArtifact } from '../types';
 import { utcNowIso } from '../utils/response';
+import { logInfo, logWarn, logError, toErrorMeta } from '../utils/logger';
 
 export type ChatStreamEvent =
   | { type: 'status'; stage: string; message?: string }
@@ -989,9 +990,17 @@ export async function processChat(
 ): Promise<ChatQueryResponse> {
   const timestamp = utcNowIso();
   const contextAvailable = !!(context?.session_id && context?.artifact);
+  const logQuery = process.env.LOG_QUERIES === '1' || process.env.LOG_QUERIES === 'true';
+  logInfo('ai.chat.start', {
+    session_id: context?.session_id ?? null,
+    context_available: contextAvailable,
+    query_length: query.length,
+    query: logQuery ? query : undefined,
+  });
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
+    logWarn('ai.chat.missing_api_key');
     return {
       query,
       response: `I received your query: "${query}". ${
@@ -1011,6 +1020,14 @@ export async function processChat(
     });
 
     const responseText = result.text;
+    const toolCalls = result.steps.reduce((sum, step) => sum + (step.toolCalls?.length ?? 0), 0);
+    logInfo('ai.chat.complete', {
+      session_id: context?.session_id ?? null,
+      finish_reason: result.finishReason,
+      steps: result.steps.length,
+      tool_calls: toolCalls,
+      total_tokens: result.totalUsage?.totalTokens,
+    });
 
     return {
       query,
@@ -1019,6 +1036,7 @@ export async function processChat(
       context_available: contextAvailable,
     };
   } catch (error) {
+    logError('ai.chat.error', { error: toErrorMeta(error) });
     const errorMessage = error instanceof Error ? error.message : String(error);
     return {
       query,
@@ -1050,6 +1068,11 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const contextAvailable = !!(context?.session_id && context?.artifact);
+      logInfo('ai.stream.start', {
+        session_id: context?.session_id ?? null,
+        context_available: contextAvailable,
+        query_length: query.length,
+      });
       sendEvent(controller, {
         type: 'status',
         stage: 'start',
@@ -1058,6 +1081,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
 
       const apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) {
+        logWarn('ai.stream.missing_api_key');
         sendEvent(controller, {
           type: 'text',
           delta:
@@ -1180,8 +1204,13 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
         emitToolSummary(controller, toolResults as any);
 
         const finishReason = await result.finishReason;
+        logInfo('ai.stream.complete', {
+          session_id: context?.session_id ?? null,
+          finish_reason: finishReason,
+        });
         sendEvent(controller, { type: 'done', finish_reason: finishReason });
       } catch (error) {
+        logError('ai.stream.error', { error: toErrorMeta(error) });
         const errorMessage = error instanceof Error ? error.message : String(error);
         sendEvent(controller, { type: 'error', message: errorMessage });
       } finally {

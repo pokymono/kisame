@@ -1,8 +1,55 @@
+import { existsSync, readdirSync, statSync } from 'fs';
 import type { PcapSession } from '../types';
 import { ensureDir, getPcapDir } from '../utils/fs';
 import { utcNowIso } from '../utils/response';
+import { logInfo } from '../utils/logger';
 
 const sessions = new Map<string, PcapSession>();
+
+function hydrateSessionsFromDisk(): void {
+  const pcapDir = getPcapDir();
+  if (!existsSync(pcapDir)) return;
+
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(pcapDir);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.endsWith('.pcap') && !entry.endsWith('.pcapng')) continue;
+
+    let id = '';
+    let fileName = '';
+    const uuidMatch = entry.match(/^([0-9a-fA-F-]{36})-(.+)$/);
+    if (uuidMatch?.[1] && uuidMatch?.[2]) {
+      id = uuidMatch[1];
+      fileName = uuidMatch[2];
+    } else {
+      const dashIndex = entry.indexOf('-');
+      if (dashIndex <= 0) continue;
+      id = entry.slice(0, dashIndex);
+      fileName = entry.slice(dashIndex + 1);
+    }
+
+    if (sessions.has(id)) continue;
+
+    const filePath = `${pcapDir}/${entry}`;
+    try {
+      const stats = statSync(filePath);
+      sessions.set(id, {
+        id,
+        fileName,
+        filePath,
+        createdAt: stats.mtime.toISOString(),
+        sizeBytes: stats.size,
+      });
+    } catch {
+      // Ignore files we cannot stat.
+    }
+  }
+}
 
 export async function initPcapStorage(): Promise<void> {
   const pcapDir = getPcapDir();
@@ -29,6 +76,7 @@ export async function storePcap(
   };
 
   sessions.set(id, session);
+  logInfo('pcap.session.store', { session_id: id, file_name: fileName, size_bytes: data.byteLength });
   return session;
 }
 
@@ -48,13 +96,20 @@ export async function registerPcapFile(opts: {
   };
 
   sessions.set(id, session);
+  logInfo('pcap.session.register', { session_id: id, file_name: opts.fileName, size_bytes: session.sizeBytes });
   return session;
 }
 
 export function getSession(id: string): PcapSession | undefined {
-  return sessions.get(id);
+  let session = sessions.get(id);
+  if (!session) {
+    hydrateSessionsFromDisk();
+    session = sessions.get(id);
+  }
+  return session;
 }
 
 export function listSessions(): PcapSession[] {
+  hydrateSessionsFromDisk();
   return Array.from(sessions.values());
 }
