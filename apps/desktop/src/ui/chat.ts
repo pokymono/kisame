@@ -15,6 +15,8 @@ const toolDisplayNames: Record<string, string> = {
   pcap_sessions_query: 'query',
   pcap_top_talkers: 'top talkers',
   pcap_protocols: 'protocols',
+  pcap_tcp_streams: 'tcp streams',
+  pcap_follow_tcp_stream: 'follow stream',
   pcap_timeline_range: 'timeline range',
   pcap_event_kinds: 'event kinds',
   get_evidence_frames: 'frames',

@@ -2,6 +2,7 @@ import { ToolLoopAgent, tool, stepCountIs } from 'ai';
 import { openai } from '@ai-sdk/openai';
 import { z } from 'zod';
 import type { ChatContext, ChatQueryResponse, AnalysisArtifact } from '../types';
+import { getSession, listTcpStreams, followTcpStream } from '../pcap';
 import { utcNowIso } from '../utils/response';
 import { logInfo, logWarn, logError, toErrorMeta } from '../utils/logger';
 
@@ -143,6 +144,19 @@ function normalizeSearchTerms(terms: string[]): string[] {
     .filter(Boolean);
 }
 
+function resolvePcapSession(context?: ChatContext, overrideId?: string) {
+  const sessionId =
+    overrideId ?? (context?.artifact as { pcap?: { session_id?: string } } | undefined)?.pcap?.session_id;
+  if (!sessionId) {
+    return { error: 'No PCAP session id available. Re-open the capture or re-run analysis.' };
+  }
+  const session = getSession(sessionId);
+  if (!session) {
+    return { error: `Unknown pcap session_id ${sessionId}.` };
+  }
+  return { session };
+}
+
 function buildSystemPrompt(context?: ChatContext): string {
   const basePrompt = `You are Kisame, an AI assistant specialized in network traffic analysis and cybersecurity forensics.
 You help users understand packet captures (PCAPs) by correlating sessions, timelines, and evidence frames.
@@ -167,6 +181,7 @@ Tool usage policy:
 - Use 'pcap_domains' for capture-wide domain questions, 'pcap_top_talkers' for top IP/traffic questions, and 'pcap_protocols' for protocol stack questions.
 - Use 'pcap_domain_sessions' to connect a domain to its sessions and 'pcap_session_domains' to list domains inside a session.
 - Use 'pcap_sessions_query' to filter sessions by IP/port/domain/flags and 'pcap_timeline_range' for time-windowed analysis.
+- If a session has no decoded events but TCP DATA is present, use 'pcap_tcp_streams' and 'pcap_follow_tcp_stream' to reconstruct raw payloads (Wireshark Follow TCP Stream equivalent).
 - If asked whether a domain is malicious/safe or to assess reputation, use 'domain_risk_assess' and clearly label the result as a local heuristic (no external threat-intel).
 
 Response format:
@@ -630,6 +645,54 @@ function createTools(context?: ChatContext) {
           samples: session.evidence.sample_frames,
           unique_count: frames.length,
         };
+      },
+    }),
+    pcap_tcp_streams: tool({
+      description: 'List TCP streams (tcp.stream) observed in the capture, with endpoints and counts.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(200).optional(),
+        max_packets: z.number().int().min(1).max(500000).optional(),
+        pcap_session_id: z.string().optional(),
+      }),
+      execute: async ({ limit, max_packets, pcap_session_id }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        const resolved = resolvePcapSession(context, pcap_session_id);
+        if ('error' in resolved) {
+          return { error: resolved.error };
+        }
+        return listTcpStreams(resolved.session, { limit, maxPackets: max_packets });
+      },
+    }),
+    pcap_follow_tcp_stream: tool({
+      description: 'Reconstruct raw TCP payload for a tcp.stream id (Follow TCP Stream).',
+      inputSchema: z.object({
+        stream_id: z.number().int().min(0),
+        max_bytes_per_direction: z.number().int().min(200).max(50000).optional(),
+        max_combined_bytes: z.number().int().min(200).max(80000).optional(),
+        max_segments: z.number().int().min(1).max(200).optional(),
+        pcap_session_id: z.string().optional(),
+      }),
+      execute: async ({
+        stream_id,
+        max_bytes_per_direction,
+        max_combined_bytes,
+        max_segments,
+        pcap_session_id,
+      }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        const resolved = resolvePcapSession(context, pcap_session_id);
+        if ('error' in resolved) {
+          return { error: resolved.error };
+        }
+        return followTcpStream(resolved.session, stream_id, {
+          maxBytesPerDirection: max_bytes_per_direction,
+          maxCombinedBytes: max_combined_bytes,
+          maxSegments: max_segments,
+        });
       },
     }),
     pcap_session_domains: tool({
@@ -1146,6 +1209,8 @@ function createAnalysisAgent(context?: ChatContext) {
     'pcap_top_talkers',
     'pcap_protocols',
     'pcap_event_kinds',
+    'pcap_tcp_streams',
+    'pcap_follow_tcp_stream',
   ] as Array<keyof typeof tools>;
 
   return new ToolLoopAgent({
@@ -1254,6 +1319,20 @@ function summarizeToolResults(results: Array<{ toolCallId: string; toolName: str
           toolCallId,
           toolName,
           summary: `pcap_protocols: ${output.total ?? 0} protocols`,
+        };
+      case 'pcap_tcp_streams':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_tcp_streams: ${output.total ?? 0} streams (showing ${output.streams?.length ?? 0})`,
+        };
+      case 'pcap_follow_tcp_stream':
+        return {
+          toolCallId,
+          toolName,
+          summary: output?.stream_id != null
+            ? `pcap_follow_tcp_stream: stream ${output.stream_id} • ${output.payload_frames ?? 0} payload frames • ${output.payload_bytes ?? 0} bytes`
+            : 'pcap_follow_tcp_stream: no stream data',
         };
       case 'pcap_timeline_range':
         return {
@@ -1400,11 +1479,16 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
           const global = !context.session_id && isGlobalQuestion(query);
           const tokens = normalizeSearchTerms([query]);
           const domainToken = tokens.find(isDomainLike);
+          const streamToken = /\b(tcp stream|data stream|follow.+stream|payload|raw tcp|netcat|nc|shell|suspicious|rogue)\b/i.test(query);
 
           if (domainToken) {
             const preface = global
               ? `Before answering, use pcap_domain_sessions for domain "${domainToken}" to locate sessions across the capture.`
               : `Before answering, use pcap_session_domains or pcap_domain_sessions to ground domain "${domainToken}".`;
+            promptToSend = `${preface}\n\nUser question: ${query}`;
+          } else if (streamToken) {
+            const preface =
+              'Before answering, use pcap_tcp_streams to list TCP streams and pcap_follow_tcp_stream to reconstruct raw payloads (Follow TCP Stream).';
             promptToSend = `${preface}\n\nUser question: ${query}`;
           } else if (global) {
             const preface =
