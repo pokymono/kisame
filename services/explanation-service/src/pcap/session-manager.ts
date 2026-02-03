@@ -19,15 +19,25 @@ function hydrateSessionsFromDisk(): void {
 
   for (const entry of entries) {
     if (!entry.endsWith('.pcap') && !entry.endsWith('.pcapng')) continue;
-    const dashIndex = entry.indexOf('-');
-    if (dashIndex <= 0) continue;
-    const id = entry.slice(0, dashIndex);
+
+    let id = '';
+    let fileName = '';
+    const uuidMatch = entry.match(/^([0-9a-fA-F-]{36})-(.+)$/);
+    if (uuidMatch?.[1] && uuidMatch?.[2]) {
+      id = uuidMatch[1];
+      fileName = uuidMatch[2];
+    } else {
+      const dashIndex = entry.indexOf('-');
+      if (dashIndex <= 0) continue;
+      id = entry.slice(0, dashIndex);
+      fileName = entry.slice(dashIndex + 1);
+    }
+
     if (sessions.has(id)) continue;
 
     const filePath = `${pcapDir}/${entry}`;
     try {
       const stats = statSync(filePath);
-      const fileName = entry.slice(dashIndex + 1);
       sessions.set(id, {
         id,
         fileName,

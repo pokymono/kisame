@@ -24,6 +24,7 @@ export type AppShellRefs = {
   explorerEmptyState: HTMLElement;
   explorerAddButton: HTMLButtonElement;
   explorerRefreshButton: HTMLButtonElement;
+  workspaceSelect: HTMLSelectElement;
   uploadIndicator: HTMLElement;
   chatMessages: HTMLElement;
   chatEmptyState: HTMLElement;
@@ -244,7 +245,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'flex-1 bg-transparent text-[11px] font-[var(--font-mono)] tracking-wider text-white/70 focus:outline-none cursor-pointer',
   }) as HTMLSelectElement;
   folderSelect.append(new Option('DEFAULT WORKSPACE', 'default'));
-  folderSelect.disabled = true;
   
   folderRow.append(folderIconSmall, folderSelect);
 
@@ -727,6 +727,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     explorerEmptyState: emptyState,
     explorerAddButton,
     explorerRefreshButton,
+    workspaceSelect: folderSelect,
     uploadIndicator,
     chatMessages,
     chatEmptyState,
