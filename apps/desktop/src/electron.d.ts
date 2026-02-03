@@ -1,5 +1,12 @@
 // Type definitions for Electron API exposed via preload script
 
+export interface ChatQueryResult {
+  query: string;
+  response: string;
+  timestamp: string;
+  context_available: boolean;
+}
+
 export interface ElectronAPI {
   platform: string;
   versions: {
@@ -11,6 +18,10 @@ export interface ElectronAPI {
     | { canceled: true }
     | { canceled: false; pcapPath: string; analysis: unknown }
   >;
+  sendChatQuery: (
+    query: string,
+    context?: { session_id?: string; artifact?: unknown }
+  ) => Promise<ChatQueryResult>;
 }
 
 declare global {

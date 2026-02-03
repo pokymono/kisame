@@ -78,7 +78,7 @@ function initApp() {
               <div class="h-8 border-b border-neutral-800 flex items-center px-3 bg-neutral-900/80">
                 <span class="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Chat</span>
               </div>
-              <div class="flex-1 p-3 space-y-4 overflow-y-auto">
+              <div id="chatMessages" class="flex-1 p-3 space-y-4 overflow-y-auto">
                  <div class="flex gap-3">
                     <div class="w-6 h-6 rounded bg-purple-600 flex items-center justify-center text-[10px] shrink-0">AI</div>
                     <div class="text-sm text-gray-300">How can I help you understand this session?</div>
@@ -86,8 +86,8 @@ function initApp() {
               </div>
               <div class="p-3 border-t border-neutral-800">
                  <div class="bg-neutral-800 rounded p-2 flex gap-2 border border-neutral-700 focus-within:border-neutral-500 transition-colors">
-                    <input type="text" placeholder="Ask about this traffic..." class="bg-transparent border-none outline-none text-sm text-white w-full placeholder-neutral-500"/>
-                    <button class="text-neutral-400 hover:text-white">
+                    <input id="chatInput" type="text" placeholder="Ask about this traffic..." class="bg-transparent border-none outline-none text-sm text-white w-full placeholder-neutral-500"/>
+                    <button id="chatSendBtn" class="text-neutral-400 hover:text-white">
                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                     </button>
                  </div>
@@ -351,6 +351,84 @@ function initApp() {
 	    } finally {
 	      openBtn.disabled = false;
 	      openBtn.textContent = 'Open PCAP';
+	    }
+	  });
+
+	  // Chat functionality
+	  const chatInput = document.getElementById('chatInput') as HTMLInputElement | null;
+	  const chatSendBtn = document.getElementById('chatSendBtn') as HTMLButtonElement | null;
+	  const chatMessages = document.getElementById('chatMessages');
+
+	  type ChatMessage = { role: 'user' | 'ai'; text: string };
+	  const chatHistory: ChatMessage[] = [];
+
+	  function renderChatMessages() {
+	    if (!chatMessages) return;
+
+	    const initialMessage = `
+	      <div class="flex gap-3">
+	        <div class="w-6 h-6 rounded bg-purple-600 flex items-center justify-center text-[10px] shrink-0">AI</div>
+	        <div class="text-sm text-gray-300">How can I help you understand this session?</div>
+	      </div>
+	    `;
+
+	    const historyHtml = chatHistory
+	      .map((msg) => {
+	        if (msg.role === 'user') {
+	          return `
+	            <div class="flex gap-3 justify-end">
+	              <div class="text-sm text-gray-300 bg-blue-900/30 rounded-lg px-3 py-2 max-w-[80%]">${escapeHtml(msg.text)}</div>
+	              <div class="w-6 h-6 rounded bg-blue-600 flex items-center justify-center text-[10px] shrink-0">You</div>
+	            </div>
+	          `;
+	        } else {
+	          return `
+	            <div class="flex gap-3">
+	              <div class="w-6 h-6 rounded bg-purple-600 flex items-center justify-center text-[10px] shrink-0">AI</div>
+	              <div class="text-sm text-gray-300 bg-neutral-800 rounded-lg px-3 py-2 max-w-[80%]">${escapeHtml(msg.text)}</div>
+	            </div>
+	          `;
+	        }
+	      })
+	      .join('');
+
+	    chatMessages.innerHTML = initialMessage + historyHtml;
+	    chatMessages.scrollTop = chatMessages.scrollHeight;
+	  }
+
+	  async function sendChatQuery() {
+	    if (!chatInput || !window.electronAPI?.sendChatQuery) return;
+
+	    const query = chatInput.value.trim();
+	    if (!query) return;
+
+	    // Add user message to chat
+	    chatHistory.push({ role: 'user', text: query });
+	    chatInput.value = '';
+	    renderChatMessages();
+
+	    // Send query to Bun server via IPC
+	    try {
+	      const context = selectedSessionId && analysis
+	        ? { session_id: selectedSessionId, artifact: analysis }
+	        : undefined;
+
+	      const result = await window.electronAPI.sendChatQuery(query, context);
+
+	      // Add AI response to chat
+	      chatHistory.push({ role: 'ai', text: result.response });
+	      renderChatMessages();
+	    } catch (e) {
+	      chatHistory.push({ role: 'ai', text: `Error: ${(e as Error).message ?? String(e)}` });
+	      renderChatMessages();
+	    }
+	  }
+
+	  chatSendBtn?.addEventListener('click', sendChatQuery);
+	  chatInput?.addEventListener('keydown', (e) => {
+	    if (e.key === 'Enter' && !e.shiftKey) {
+	      e.preventDefault();
+	      sendChatQuery();
 	    }
 	  });
 
