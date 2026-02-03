@@ -4,6 +4,7 @@ import { ensureDir, getPcapDir } from '../utils/fs';
 import { utcNowIso } from '../utils/response';
 import { registerPcapFile } from './session-manager';
 import { resolveTsharkPath } from './tshark';
+import { logInfo, logWarn, logError, toErrorMeta } from '../utils/logger';
 
 const isWindows = process.platform === 'win32';
 
@@ -55,13 +56,16 @@ export async function listCaptureInterfaces(): Promise<CaptureInterface[]> {
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
+    logError('capture.interfaces.error', { exit_code: exitCode, stderr_preview: stderr.slice(0, 400) });
     throw new Error(`tshark -D failed (exit ${exitCode}).\n\nstderr:\n${stderr}`);
   }
 
-  return stdout
+  const interfaces = stdout
     .split('\n')
     .map(parseInterfaceLine)
     .filter((entry): entry is CaptureInterface => Boolean(entry));
+  logInfo('capture.interfaces.list', { count: interfaces.length });
+  return interfaces;
 }
 
 function chooseDefaultInterface(interfaces: CaptureInterface[]): CaptureInterface {
@@ -144,6 +148,13 @@ export async function startLiveCapture(opts: StartCaptureOptions): Promise<LiveC
   }
 
   const proc = Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
+  logInfo('capture.start', {
+    capture_id: id,
+    interface_id: iface.id,
+    interface_name: iface.name,
+    file_name: safeName,
+    file_path: filePath,
+  });
   const liveCapture: LiveCapture = {
     id,
     interfaceId: iface.id,
@@ -188,6 +199,11 @@ export async function startLiveCapture(opts: StartCaptureOptions): Promise<LiveC
   ]);
   if (earlyExit !== null && earlyExit !== 0) {
     activeCaptures.delete(id);
+    logError('capture.start.error', {
+      capture_id: id,
+      exit_code: earlyExit,
+      stderr_preview: liveCapture.stderr.slice(0, 400),
+    });
     throw new Error(
       `Live capture failed to start (exit ${earlyExit}).\n\nstderr:\n${liveCapture.stderr || 'No stderr output.'}`
     );
@@ -206,6 +222,7 @@ export async function stopLiveCapture(captureId: string): Promise<{
     throw new Error('Unknown capture_id');
   }
 
+  logInfo('capture.stop.request', { capture_id: captureId });
   try {
     // Windows doesn't support SIGINT; use SIGTERM or just kill
     capture.process.kill(isWindows ? 'SIGTERM' : 'SIGINT');
@@ -223,6 +240,7 @@ export async function stopLiveCapture(captureId: string): Promise<{
   } catch (error) {
     const stderr = capture.stderr?.trim();
     const extra = stderr ? `\n\nstderr:\n${stderr}` : '';
+    logError('capture.stop.error', { capture_id: captureId, error: toErrorMeta(error) });
     throw new Error(
       `Captured file missing or unreadable: ${(error as Error).message ?? String(error)}${extra}`
     );
@@ -234,6 +252,7 @@ export async function stopLiveCapture(captureId: string): Promise<{
     sizeBytes,
   });
 
+  logInfo('capture.stop.complete', { capture_id: captureId, session_id: session.id, exit_code: exitCode });
   return { session, exitCode };
 }
 

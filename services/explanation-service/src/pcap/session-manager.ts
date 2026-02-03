@@ -1,6 +1,7 @@
 import type { PcapSession } from '../types';
 import { ensureDir, getPcapDir } from '../utils/fs';
 import { utcNowIso } from '../utils/response';
+import { logInfo } from '../utils/logger';
 
 const sessions = new Map<string, PcapSession>();
 
@@ -29,6 +30,7 @@ export async function storePcap(
   };
 
   sessions.set(id, session);
+  logInfo('pcap.session.store', { session_id: id, file_name: fileName, size_bytes: data.byteLength });
   return session;
 }
 
@@ -48,6 +50,7 @@ export async function registerPcapFile(opts: {
   };
 
   sessions.set(id, session);
+  logInfo('pcap.session.register', { session_id: id, file_name: opts.fileName, size_bytes: session.sizeBytes });
   return session;
 }
 
