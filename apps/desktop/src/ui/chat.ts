@@ -8,6 +8,7 @@ const toolDisplayNames: Record<string, string> = {
   get_session: 'SESSION DETAIL',
   get_timeline: 'TIMELINE EVENTS',
   search_timeline: 'SEARCH TIMELINE',
+  pcap_search: 'PCAP SEARCH',
   get_evidence_frames: 'EVIDENCE FRAMES',
 };
 
