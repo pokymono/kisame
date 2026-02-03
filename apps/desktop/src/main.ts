@@ -211,6 +211,15 @@ async function initApp() {
     try {
       const res = await fetch(`${explanationBaseUrl}/pcap/list`);
       if (!res.ok) {
+        if (res.status === 404) {
+          explorerCaptures = [];
+          setExplorerEmptyState(
+            'EXPLORER UNAVAILABLE',
+            'Update the backend service.'
+          );
+          renderExplorerCaptures();
+          return;
+        }
         const msg = await res.text().catch(() => '');
         throw new Error(`Explorer refresh failed (${res.status}). ${msg}`);
       }
@@ -227,7 +236,7 @@ async function initApp() {
     } catch {
       explorerCaptures = [];
       setExplorerEmptyState(
-        'BACKEND OFFLINE',
+        'EXPLORER UNAVAILABLE',
         'Unable to fetch captures from the analysis service'
       );
       renderExplorerCaptures();
