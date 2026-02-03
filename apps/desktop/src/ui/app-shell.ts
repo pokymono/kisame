@@ -25,6 +25,10 @@ export type AppShellRefs = {
   explorerAddButton: HTMLButtonElement;
   explorerRefreshButton: HTMLButtonElement;
   workspaceSelect: HTMLSelectElement;
+  workspaceForm: HTMLElement;
+  workspaceInput: HTMLInputElement;
+  workspaceAddButton: HTMLButtonElement;
+  workspaceCancelButton: HTMLButtonElement;
   uploadIndicator: HTMLElement;
   chatMessages: HTMLElement;
   chatEmptyState: HTMLElement;
@@ -248,6 +252,27 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   
   folderRow.append(folderIconSmall, folderSelect);
 
+  const workspaceForm = el('div', {
+    className: 'mx-3 mt-2 hidden items-center gap-2 rounded px-2 py-2 bg-[var(--app-surface)] border border-[var(--app-line)]',
+  });
+  const workspaceInput = el('input', {
+    className: 'flex-1 bg-transparent text-[11px] font-[var(--font-mono)] tracking-wider text-white/70 focus:outline-none',
+    attrs: { type: 'text', placeholder: 'Workspace name' },
+  }) as HTMLInputElement;
+  const workspaceAddButton = el('button', {
+    className:
+      'px-2 py-1 text-[9px] font-[var(--font-display)] tracking-[0.18em] text-[var(--accent-cyan)] border border-[var(--accent-cyan)]/30 rounded hover:bg-[var(--accent-cyan)]/10 transition-all',
+    text: 'ADD',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  const workspaceCancelButton = el('button', {
+    className:
+      'px-2 py-1 text-[9px] font-[var(--font-display)] tracking-[0.18em] text-white/50 border border-white/10 rounded hover:bg-white/5 transition-all',
+    text: 'CANCEL',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  workspaceForm.append(workspaceInput, workspaceAddButton, workspaceCancelButton);
+
   const fileList = el('div', {
     className: 'flex-1 px-3 py-3 text-xs space-y-1 overflow-y-auto',
   });
@@ -270,7 +295,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   emptyState.append(emptyIcon, emptyTitle, emptySubtitle);
   fileList.append(emptyState);
 
-  sidebar.append(sidebarHeader, folderRow, fileList);
+  sidebar.append(sidebarHeader, folderRow, workspaceForm, fileList);
 
   const centerTop = el('div', {
     className: 'col-start-3 col-span-2 row-start-1 grid grid-cols-2 overflow-hidden relative',
@@ -728,6 +753,10 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     explorerAddButton,
     explorerRefreshButton,
     workspaceSelect: folderSelect,
+    workspaceForm,
+    workspaceInput,
+    workspaceAddButton,
+    workspaceCancelButton,
     uploadIndicator,
     chatMessages,
     chatEmptyState,
