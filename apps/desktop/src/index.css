@@ -384,6 +384,43 @@
   animation: statusPulse 2s ease-in-out infinite;
 }
 
+.capture-status-ready [data-status-dot] {
+  background: rgba(255, 255, 255, 0.2);
+}
+.capture-status-ready [data-status-text] {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.capture-status-capturing [data-status-dot] {
+  background: var(--accent-teal);
+  animation: statusPulse 1.5s ease-in-out infinite;
+}
+.capture-status-capturing [data-status-text] {
+  color: var(--accent-teal);
+}
+.capture-status-capturing {
+  border-color: rgba(0, 255, 157, 0.3) !important;
+  background: rgba(0, 255, 157, 0.05) !important;
+}
+
+.capture-status-error [data-status-dot] {
+  background: var(--accent-red);
+}
+.capture-status-error [data-status-text] {
+  color: var(--accent-red);
+}
+.capture-status-error {
+  border-color: rgba(255, 61, 90, 0.3) !important;
+  background: rgba(255, 61, 90, 0.05) !important;
+}
+
+.capture-status-stopped [data-status-dot] {
+  background: var(--accent-amber);
+}
+.capture-status-stopped [data-status-text] {
+  color: var(--accent-amber);
+}
+
 /* Transport protocol badges */
 .badge-tcp {
   color: #00ff9d;

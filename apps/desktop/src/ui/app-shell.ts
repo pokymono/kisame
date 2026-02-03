@@ -540,15 +540,161 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   chatColumn.append(analysisPanel, chatHeader, chatBody, chatInputRow);
 
-  body.append(navRail, sidebar, centerTop, evidenceRow, chatColumn);
+  const capturePanel = el('section', {
+    className:
+      'col-start-3 col-span-3 row-span-2 hidden flex flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/70 to-transparent',
+  });
+
+  const captureHeader = el('div', {
+    className: 'flex items-center justify-between px-6 py-4 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+  const captureHeaderLeft = el('div', { className: 'flex items-center gap-3' });
+  const captureIconEl = iconRadar();
+  captureIconEl.classList.add('size-4', 'text-[var(--accent-cyan)]');
+  captureHeaderLeft.append(
+    captureIconEl,
+    el('span', { className: 'section-label', text: 'CAPTURE CONSOLE' })
+  );
+  captureHeader.append(
+    captureHeaderLeft,
+    el('span', { className: 'data-label', text: 'LIVE + FILE INGEST' })
+  );
+
+  const captureGrid = el('div', {
+    className: 'flex-1 overflow-auto p-6 grid grid-cols-2 gap-6 content-start',
+  });
+
+  // Open PCAP Card
+  const openCard = el('div', {
+    className: 'relative group data-card rounded-lg p-5 flex flex-col gap-4 overflow-hidden',
+  });
+  
+  const openCardGlow = el('div', {
+    className: 'absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none',
+    attrs: { style: 'background: radial-gradient(ellipse at top left, rgba(0, 240, 255, 0.08) 0%, transparent 60%);' }
+  });
+  
+  const openCardHeader = el('div', { className: 'flex items-center justify-between' });
+  const openCardTitle = el('div', { className: 'flex items-center gap-2' });
+  const folderIconCard = iconFolder();
+  folderIconCard.classList.add('size-4', 'text-[var(--accent-cyan)]');
+  openCardTitle.append(folderIconCard, el('span', { className: 'section-label', text: 'OPEN PCAP' }));
+  
+  const openCardBadge = el('div', {
+    className: 'px-2 py-0.5 text-[8px] font-[var(--font-mono)] tracking-wider text-[var(--accent-cyan)]/60 border border-[var(--accent-cyan)]/20 rounded uppercase',
+    text: 'FILE',
+  });
+  openCardHeader.append(openCardTitle, openCardBadge);
+
+  const openCardDesc = el('div', {
+    className: 'text-[13px] text-white/50 leading-relaxed',
+    text: 'Load a packet capture from disk and begin session analysis immediately.',
+  });
+
+  const openCardFooter = el('div', { className: 'flex items-center justify-between mt-auto pt-2' });
+  const openCardMeta = el('div', {
+    className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-white/25 uppercase',
+    text: '.PCAP • .PCAPNG',
+  });
+  openCardFooter.append(openCardMeta, openPcapButton);
+
+  openCard.append(openCardGlow, openCardHeader, openCardDesc, openCardFooter);
+
+  // Live Capture Card
+  const liveCard = el('div', {
+    className: 'relative group data-card rounded-lg p-5 flex flex-col gap-4 overflow-hidden',
+  });
+  
+  const liveCardGlow = el('div', {
+    className: 'absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none',
+    attrs: { style: 'background: radial-gradient(ellipse at top left, rgba(0, 255, 157, 0.08) 0%, transparent 60%);' }
+  });
+
+  const liveCardHeader = el('div', { className: 'flex items-center justify-between' });
+  const liveCardTitle = el('div', { className: 'flex items-center gap-2' });
+  const waveIconCard = iconWave();
+  waveIconCard.classList.add('size-4', 'text-[var(--accent-teal)]');
+  liveCardTitle.append(waveIconCard, el('span', { className: 'section-label text-[var(--accent-teal)]', text: 'LIVE CAPTURE' }));
+  
+  const liveCardBadge = el('div', {
+    className: 'px-2 py-0.5 text-[8px] font-[var(--font-mono)] tracking-wider text-[var(--accent-teal)]/60 border border-[var(--accent-teal)]/20 rounded uppercase',
+    text: 'REAL-TIME',
+  });
+  liveCardHeader.append(liveCardTitle, liveCardBadge);
+
+  const liveCardDesc = el('div', {
+    className: 'text-[13px] text-white/50 leading-relaxed',
+    text: 'Capture packets from a network interface and stream directly into Kisame for analysis.',
+  });
+
+  // Live capture status indicator
+  const liveCaptureStatus = el('div', {
+    className: 'flex items-center gap-2 px-3 py-2 rounded bg-[var(--app-bg)] border border-[var(--app-line)]',
+  });
+  const statusIndicator = el('div', {
+    className: 'size-2 rounded-full bg-white/20',
+    attrs: { 'data-status-dot': 'true' },
+  });
+  const statusLabel = el('span', {
+    className: 'text-[10px] font-[var(--font-mono)] tracking-wider text-white/40 uppercase',
+    text: 'READY',
+    attrs: { 'data-status-text': 'true' },
+  });
+  liveCaptureStatus.append(statusIndicator, statusLabel);
+
+  const liveCardFooter = el('div', { className: 'flex items-center justify-between mt-auto pt-2' });
+  liveCardFooter.append(liveCaptureStatus, liveCaptureButton);
+
+  liveCard.append(liveCardGlow, liveCardHeader, liveCardDesc, liveCardFooter);
+
+  captureGrid.append(openCard, liveCard);
+  capturePanel.append(captureHeader, captureGrid);
+
+  // ============================================================================
+  // EXPORT PANEL
+  // ============================================================================
+  const exportPanel = el('section', {
+    className:
+      'col-start-3 col-span-3 row-span-2 hidden flex flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/70 to-transparent',
+  });
+  const exportHeader = el('div', {
+    className: 'flex items-center justify-between px-6 py-4 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+  const exportHeaderLeft = el('div', { className: 'flex items-center gap-3' });
+  const exportIconEl = iconShield();
+  exportIconEl.classList.add('size-4', 'text-[var(--accent-amber)]');
+  exportHeaderLeft.append(
+    exportIconEl,
+    el('span', { className: 'section-label', text: 'EXPORT' })
+  );
+  exportHeader.append(
+    exportHeaderLeft,
+    el('span', { className: 'data-label', text: 'REPORTS + ARTIFACTS' })
+  );
+  const exportBody = el('div', {
+    className: 'flex-1 flex items-center justify-center text-center px-8 text-white/40 text-sm',
+    text: 'Export pipelines will appear here.',
+  });
+  exportPanel.append(exportHeader, exportBody);
+
+  body.append(navRail, sidebar, centerTop, evidenceRow, chatColumn, capturePanel, exportPanel);
   app.append(bgEffects, topBar, body);
   root.replaceChildren(app);
 
   return {
     root: app,
+    navCaptureButton,
+    navAnalyzeButton,
+    navExportButton,
     openPcapButton,
     liveCaptureButton,
+    liveCaptureStatus,
     captureBadge: badgeText,
+    capturePanel,
+    exportPanel,
+    centerTop,
+    evidenceRow,
+    chatColumn,
     sessionsList,
     timelineList,
     analysisSummary,
