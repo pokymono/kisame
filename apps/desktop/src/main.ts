@@ -150,6 +150,7 @@ async function initApp() {
   const chatHistory: string[] = [];
   let chatHistoryIndex = -1;
   let chatCurrentDraft = '';
+  let chatAbortController: AbortController | null = null;
 
   type Workspace = { id: string; name: string };
   const workspaceStorageKey = 'kisame.workspaces';
@@ -1687,6 +1688,13 @@ async function initApp() {
     };
     chatManager.addMessage(aiMessage);
 
+    // Swap Send -> Stop
+    ui.chatSendBtn.classList.add('hidden');
+    ui.chatStopBtn.classList.remove('hidden');
+
+    if (chatAbortController) chatAbortController.abort();
+    chatAbortController = new AbortController();
+
     const contextMode = options?.contextMode;
     const context = analysis
       ? contextMode === 'capture'
@@ -1705,6 +1713,7 @@ async function initApp() {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ query: query, context }),
+        signal: chatAbortController.signal,
       });
 
       if (!response.ok || !response.body) {
@@ -1809,10 +1818,27 @@ async function initApp() {
     } catch (err) {
       aiMessage.status = 'Error';
       aiMessage.isStreaming = false;
-      aiMessage.text = `Error: ${(err as Error).message ?? String(err)}`;
+      if ((err as Error).name === 'AbortError') {
+        aiMessage.status = 'Cancelled';
+        aiMessage.text += '\n\n\n_Analysis stopped by user._';
+      } else {
+        aiMessage.text = `Error: ${(err as Error).message ?? String(err)}`;
+      }
       chatManager.updateMessage(aiMessage);
+    } finally {
+      // Restore buttons
+      ui.chatSendBtn.classList.remove('hidden');
+      ui.chatStopBtn.classList.add('hidden');
+      chatAbortController = null;
     }
   }
+
+  ui.chatStopBtn.addEventListener('click', () => {
+    if (chatAbortController) {
+      chatAbortController.abort();
+      chatAbortController = null;
+    }
+  });
 
   async function sendChatQuery() {
     const query = ui.chatInput.value.trim();

@@ -50,6 +50,7 @@ export type AppShellRefs = {
   chatEmptyState: HTMLElement;
   chatInput: HTMLInputElement;
   chatSendBtn: HTMLButtonElement;
+  chatStopBtn: HTMLButtonElement;
   sessionIdLabel: HTMLElement;
   selectedEvidenceLabel: HTMLElement;
   welcomePanel: HTMLElement;
@@ -1032,7 +1033,12 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     text: 'SEND',
   }) as HTMLButtonElement;
 
-  chatInputWrap.append(inputIcon, chatInput, chatSendBtn);
+  const chatStopBtn = el('button', {
+    className: 'mr-1 cyber-btn hidden px-4 py-2 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.15em] text-[var(--accent-red)] uppercase',
+    text: 'STOP',
+  }) as HTMLButtonElement;
+
+  chatInputWrap.append(inputIcon, chatInput, chatSendBtn, chatStopBtn);
   chatInputRow.append(chatInputWrap);
 
   chatColumn.append(analysisPanel, chatHeader, chatBody, chatInputRow);
@@ -1236,6 +1242,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     chatEmptyState,
     chatInput,
     chatSendBtn,
+    chatStopBtn,
     sessionIdLabel,
     selectedEvidenceLabel,
     welcomePanel,
