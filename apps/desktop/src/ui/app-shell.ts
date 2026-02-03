@@ -11,6 +11,7 @@ export type AppShellRefs = {
   analyzeScreenTimelineButton: HTMLButtonElement;
   analyzeScreenEvidenceButton: HTMLButtonElement;
   analyzeScreenInsightsButton: HTMLButtonElement;
+  analyzeScreenWorkflowsButton: HTMLButtonElement;
   analyzeScreenLabel: HTMLElement;
   navCaptureButton: HTMLButtonElement;
   navAnalyzeButton: HTMLButtonElement;
@@ -62,6 +63,16 @@ export type AppShellRefs = {
   evidencePanel: HTMLElement;
   sessionKeyPanel: HTMLElement;
   insightsPanel: HTMLElement;
+  workflowsPanel: HTMLElement;
+  workflowList: HTMLElement;
+  workflowNameInput: HTMLInputElement;
+  workflowScopeSelect: HTMLSelectElement;
+  workflowPromptsInput: HTMLTextAreaElement;
+  workflowAutoRunCheckbox: HTMLInputElement;
+  workflowNewButton: HTMLButtonElement;
+  workflowSaveButton: HTMLButtonElement;
+  workflowRunButton: HTMLButtonElement;
+  workflowDeleteButton: HTMLButtonElement;
 };
 
 export function createAppShell(root: HTMLElement): AppShellRefs {
@@ -407,13 +418,19 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     text: 'INSIGHTS',
     attrs: { type: 'button', 'data-analyze-screen': 'insights' },
   }) as HTMLButtonElement;
+  const analyzeScreenWorkflowsButton = el('button', {
+    className: screenBtnInactive,
+    text: 'WORKFLOWS',
+    attrs: { type: 'button', 'data-analyze-screen': 'workflows' },
+  }) as HTMLButtonElement;
 
   screenTabs.append(
     analyzeScreenOverviewButton,
     analyzeScreenSessionsButton,
     analyzeScreenTimelineButton,
     analyzeScreenEvidenceButton,
-    analyzeScreenInsightsButton
+    analyzeScreenInsightsButton,
+    analyzeScreenWorkflowsButton
   );
 
   const analyzeScreenLabel = el('div', {
@@ -795,6 +812,95 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   });
   insightsPanel.append(insightsHeader, insightsBody);
 
+  const workflowsPanel = el('section', {
+    className: 'h-full flex min-w-0 flex-col overflow-hidden',
+  });
+  const workflowsHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+  workflowsHeader.append(
+    el('div', { className: 'section-label', text: 'WORKFLOWS' }),
+    el('div', { className: 'data-label', text: 'PROMPT AUTOMATION' })
+  );
+
+  const workflowGrid = el('div', {
+    className: 'grid flex-1 min-h-0 overflow-hidden workflow-grid',
+    attrs: { style: 'grid-template-columns: 280px minmax(0,1fr);' },
+  });
+
+  const workflowList = el('div', {
+    className: 'min-w-0 overflow-auto p-3 space-y-2 border-r border-[var(--app-line)]',
+  });
+
+  const workflowEditor = el('div', {
+    className: 'min-w-0 overflow-auto p-4 space-y-4',
+  });
+
+  const workflowNameInput = el('input', {
+    className:
+      'w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-[12px] font-[var(--font-mono)] text-white/80 placeholder:text-white/25 focus:outline-none',
+    attrs: { type: 'text', placeholder: 'Workflow name…' },
+  }) as HTMLInputElement;
+
+  const workflowScopeSelect = el('select', {
+    className:
+      'w-full bg-white/5 border border-white/10 rounded px-3 py-2 text-[11px] font-[var(--font-mono)] tracking-wider text-white/70 focus:outline-none',
+  }) as HTMLSelectElement;
+  workflowScopeSelect.append(new Option('Capture-wide context', 'capture'), new Option('Selected session context', 'session'));
+
+  const workflowPromptsInput = el('textarea', {
+    className:
+      'w-full min-h-[220px] bg-white/5 border border-white/10 rounded px-3 py-2 text-[12px] font-[var(--font-mono)] text-white/75 placeholder:text-white/25 focus:outline-none',
+    attrs: {
+      placeholder:
+        'One prompt per line.\nExample:\n- Show top IPs (top talkers)\n- Show top ports and protocols\n- Summarize suspicious sessions and flags',
+    },
+  }) as HTMLTextAreaElement;
+
+  const workflowAutoRunRow = el('label', { className: 'flex items-center gap-2 text-[10px] text-white/50' });
+  const workflowAutoRunCheckbox = el('input', {
+    className: 'accent-[var(--accent-cyan)]',
+    attrs: { type: 'checkbox' },
+  }) as HTMLInputElement;
+  workflowAutoRunRow.append(workflowAutoRunCheckbox, el('span', { text: 'Auto-run this workflow on capture load' }));
+
+  const workflowActions = el('div', { className: 'flex items-center gap-2 flex-wrap' });
+  const workflowNewButton = el('button', {
+    className: 'cyber-btn px-3 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-white/70 uppercase',
+    text: 'NEW',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  const workflowSaveButton = el('button', {
+    className: 'cyber-btn px-3 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-[var(--accent-cyan)] uppercase',
+    text: 'SAVE',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  const workflowRunButton = el('button', {
+    className: 'cyber-btn px-3 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-[var(--accent-teal)] uppercase',
+    text: 'RUN',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  const workflowDeleteButton = el('button', {
+    className: 'cyber-btn px-3 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-[var(--accent-red)] uppercase',
+    text: 'DELETE',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+
+  workflowActions.append(workflowNewButton, workflowSaveButton, workflowRunButton, workflowDeleteButton);
+  workflowEditor.append(
+    el('div', { className: 'data-label', text: 'Name' }),
+    workflowNameInput,
+    el('div', { className: 'data-label', text: 'Context' }),
+    workflowScopeSelect,
+    el('div', { className: 'data-label', text: 'Prompts' }),
+    workflowPromptsInput,
+    workflowAutoRunRow,
+    workflowActions
+  );
+
+  workflowGrid.append(workflowList, workflowEditor);
+  workflowsPanel.append(workflowsHeader, workflowGrid);
+
   const overviewTopLayout = el('div', {
     className: 'relative grid min-h-0 overflow-hidden overview-top-grid',
     attrs: { style: 'grid-template-columns: var(--sessions-w) minmax(0,1fr);' },
@@ -1091,6 +1197,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     analyzeScreenTimelineButton,
     analyzeScreenEvidenceButton,
     analyzeScreenInsightsButton,
+    analyzeScreenWorkflowsButton,
     analyzeScreenLabel,
     navCaptureButton,
     navAnalyzeButton,
@@ -1142,5 +1249,15 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     evidencePanel,
     sessionKeyPanel,
     insightsPanel,
+    workflowsPanel,
+    workflowList,
+    workflowNameInput,
+    workflowScopeSelect,
+    workflowPromptsInput,
+    workflowAutoRunCheckbox,
+    workflowNewButton,
+    workflowSaveButton,
+    workflowRunButton,
+    workflowDeleteButton,
   };
 }
