@@ -3,16 +3,21 @@ import { renderMarkdown, destroyMarkdown } from './markdown';
 import type { ChatMessage, ToolCallLog } from '../types';
 
 const toolDisplayNames: Record<string, string> = {
-  pcap_overview: 'PCAP OVERVIEW',
-  list_sessions: 'LIST SESSIONS',
-  get_session: 'SESSION DETAIL',
-  get_timeline: 'TIMELINE EVENTS',
-  search_timeline: 'SEARCH TIMELINE',
-  pcap_search: 'PCAP SEARCH',
-  pcap_domains: 'PCAP DOMAINS',
-  pcap_top_talkers: 'TOP TALKERS',
-  pcap_protocols: 'PCAP PROTOCOLS',
-  get_evidence_frames: 'EVIDENCE FRAMES',
+  pcap_overview: 'overview',
+  list_sessions: 'sessions',
+  get_session: 'session detail',
+  get_timeline: 'timeline',
+  search_timeline: 'search',
+  pcap_search: 'search',
+  pcap_domains: 'domains',
+  pcap_domain_sessions: 'domain sessions',
+  pcap_session_domains: 'session domains',
+  pcap_sessions_query: 'query',
+  pcap_top_talkers: 'top talkers',
+  pcap_protocols: 'protocols',
+  pcap_timeline_range: 'timeline range',
+  pcap_event_kinds: 'event kinds',
+  get_evidence_frames: 'frames',
 };
 
 export interface ChatManagerOptions {
@@ -122,64 +127,47 @@ export class ChatManager {
 }
 
 function toolIcon(status: ToolCallLog['status']): HTMLElement {
-  const icon = el('div', {
-    className: 'relative size-2.5 rounded-full transition-all',
+  const icon = el('span', {
+    className: 'text-[9px] leading-none',
   });
   
-  if (status === 'pending') {
-    icon.className += ' bg-white/20 border border-white/30';
+  if (status === 'done') {
+    icon.textContent = '✓';
+    icon.className += ' text-white/30';
   } else if (status === 'running') {
-    icon.className += ' bg-[var(--accent-amber)] status-pulse';
-  } else if (status === 'done') {
-    icon.className += ' bg-[var(--accent-teal)]';
-    icon.style.boxShadow = '0 0 8px rgba(0, 255, 157, 0.5)';
+    icon.textContent = '·';
+    icon.className += ' text-[var(--accent-cyan)]/50';
+  } else if (status === 'error') {
+    icon.textContent = '✗';
+    icon.className += ' text-[var(--accent-red)]/50';
   } else {
-    icon.className += ' bg-[var(--accent-red)]';
-    icon.style.boxShadow = '0 0 8px rgba(255, 61, 90, 0.5)';
+    icon.textContent = '·';
+    icon.className += ' text-white/20';
   }
   return icon;
 }
 
 function renderToolCall(tool: ToolCallLog): HTMLElement {
   const row = el('div', {
-    className: 'flex items-center gap-2.5 py-1',
+    className: 'flex items-center gap-1.5 py-0.5',
   });
   
-  const iconWrap = el('div', {
-    className: 'flex items-center justify-center w-4',
-  });
-  iconWrap.append(toolIcon(tool.status));
+  row.append(toolIcon(tool.status));
   
   const label = el('span', {
-    className: 'text-[10px] font-[var(--font-mono)] tracking-[0.1em] uppercase truncate',
-    text: toolDisplayNames[tool.name] ?? tool.name,
+    className: 'text-[9px] font-[var(--font-mono)] text-white/30 truncate',
+    text: toolDisplayNames[tool.name] ?? tool.name.toLowerCase(),
   });
   
-  if (tool.status === 'running') {
-    label.classList.add('text-[var(--accent-amber)]');
-  } else if (tool.status === 'done') {
-    label.classList.add('text-[var(--accent-teal)]/70');
-  } else if (tool.status === 'error') {
-    label.classList.add('text-[var(--accent-red)]/70');
-  } else {
-    label.classList.add('text-white/40');
-  }
-  
-  row.append(iconWrap, label);
+  row.append(label);
   return row;
 }
 
 function renderToolCalls(tools: ToolCallLog[]): HTMLElement {
   const container = el('div', {
-    className: 'mt-3 py-2 px-3 rounded bg-[var(--app-surface)] border border-[var(--app-line)] space-y-0.5 overflow-hidden',
+    className: 'mt-2 py-1 px-2 space-y-0 overflow-hidden',
     attrs: { 'data-tool-calls': 'true' },
   });
-  
-  const header = el('div', {
-    className: 'text-[9px] font-[var(--font-display)] tracking-[0.2em] text-white/30 uppercase mb-2',
-    text: 'TOOL EXECUTION',
-  });
-  container.append(header);
   
   for (const tool of tools) {
     container.append(renderToolCall(tool));
@@ -209,48 +197,22 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
     className: 'flex gap-3 animate-slide-in',
   });
 
-  const avatar = el('div', {
-    className: 'relative shrink-0 mt-1',
-  });
-  
-  const avatarInner = el('div', {
-    className:
-      'size-7 rounded flex items-center justify-center ' +
-      'bg-gradient-to-br from-[var(--accent-purple)]/30 to-[var(--accent-cyan)]/20 ' +
-      'border border-[var(--accent-purple)]/50',
-  });
-  
-  const avatarText = el('span', {
-    className: 'text-[9px] font-[var(--font-display)] font-bold tracking-wider text-[var(--accent-purple)]',
-    text: 'AI',
-  });
-  avatarInner.append(avatarText);
-  avatar.append(avatarInner);
-
   const bubble = el('div', {
-    className: 'min-w-0 max-w-[calc(100%-40px)] space-y-2 overflow-hidden',
+    className: 'min-w-0 max-w-full space-y-2 overflow-hidden',
   });
 
   if (message.status && message.isStreaming) {
     const statusRow = el('div', {
-      className: 'flex items-center gap-2 py-1',
+      className: 'py-1.5',
       attrs: { 'data-status': 'true' },
     });
     
-    const pulseRing = el('div', {
-      className: 'relative flex items-center justify-center',
-    });
-    const pulseDot = el('div', { 
-      className: 'size-2 rounded-full bg-[var(--accent-cyan)] status-pulse' 
-    });
-    pulseRing.append(pulseDot);
-    
     const statusText = el('span', {
-      className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] text-[var(--accent-cyan)]/70 uppercase',
+      className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] uppercase status-shimmer inline-block px-1 rounded',
       text: message.status,
     });
     
-    statusRow.append(pulseRing, statusText);
+    statusRow.append(statusText);
     bubble.append(statusRow);
   }
 
@@ -284,7 +246,7 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
     bubble.append(summaryEl);
   }
 
-  messageWrap.append(avatar, bubble);
+  messageWrap.append(bubble);
   return messageWrap;
 }
 
@@ -298,28 +260,20 @@ export function updateMessageElement(
   const existingStatus = bubble.querySelector('[data-status]');
   if (message.status && message.isStreaming) {
     if (existingStatus) {
-      const span = existingStatus.querySelector('span:last-child');
+      const span = existingStatus.querySelector('span');
       if (span) span.textContent = message.status;
     } else {
       const statusRow = el('div', {
-        className: 'flex items-center gap-2 py-1',
+        className: 'py-1.5',
         attrs: { 'data-status': 'true' },
       });
       
-      const pulseRing = el('div', {
-        className: 'relative flex items-center justify-center',
-      });
-      const pulseDot = el('div', { 
-        className: 'size-2 rounded-full bg-[var(--accent-cyan)] status-pulse' 
-      });
-      pulseRing.append(pulseDot);
-      
       const statusText = el('span', {
-        className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] text-[var(--accent-cyan)]/70 uppercase',
+        className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] uppercase status-shimmer inline-block px-1 rounded',
         text: message.status,
       });
       
-      statusRow.append(pulseRing, statusText);
+      statusRow.append(statusText);
       bubble.prepend(statusRow);
     }
   } else if (existingStatus) {
