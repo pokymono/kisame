@@ -4,7 +4,7 @@ import { el } from './ui/dom';
 import { ChatManager } from './ui/chat';
 import type { AnalysisArtifact, ChatMessage, ToolCallLog } from './types';
 
-function initApp() {
+async function initApp() {
   const root = document.getElementById('root');
   if (!root) return;
 
@@ -43,9 +43,18 @@ function initApp() {
     ui.exportPanel.classList.toggle('hidden', tab !== 'export');
   }
 
-  const explanationBaseUrl =
+  let explanationBaseUrl =
     ((import.meta as any).env?.VITE_EXPLANATION_URL as string | undefined) ??
     'http://localhost:8787';
+
+  if (window.electronAPI?.getBackendUrl) {
+    try {
+      const backendUrl = await window.electronAPI.getBackendUrl();
+      if (backendUrl) explanationBaseUrl = backendUrl;
+    } catch {
+      // Keep default.
+    }
+  }
   const explanationCache = new Map<string, string>();
   let explanationRequestSeq = 0;
 
