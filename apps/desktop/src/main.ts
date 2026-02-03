@@ -1545,6 +1545,15 @@ async function initApp() {
     }
   });
 
+  window.addEventListener('keydown', (event) => {
+    if (event.key === '/' && 
+        document.activeElement?.tagName !== 'INPUT' && 
+        document.activeElement?.tagName !== 'TEXTAREA') {
+      event.preventDefault();
+      ui.chatInput.focus();
+    }
+  });
+
   ui.navCaptureButton.addEventListener('click', () => setActiveTab('capture'));
   ui.navAnalyzeButton.addEventListener('click', () => setActiveTab('analyze'));
   ui.navExportButton.addEventListener('click', () => setActiveTab('export'));
