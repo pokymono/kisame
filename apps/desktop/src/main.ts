@@ -16,6 +16,12 @@ async function initApp() {
   let liveCaptureInterface: string | null = null;
   let lastAnalysisRef: AnalysisArtifact | null = null;
   let captureSessionId: string | null = null;
+  type TimelineScope = 'session' | 'all';
+  let timelineScope: TimelineScope = 'session';
+  let timelineSearchQuery = '';
+  let timelineKindFilter = 'all';
+  type AnalyzeScreen = 'overview' | 'sessions' | 'timeline' | 'evidence' | 'insights';
+  let analyzeScreen: AnalyzeScreen = 'overview';
   const analysisCache = new Map<string, AnalysisArtifact>();
 
   type AppTab = 'capture' | 'analyze' | 'export';
@@ -38,11 +44,63 @@ async function initApp() {
     setTabButtonState(ui.navExportButton, tab === 'export');
 
     const showAnalysis = tab === 'analyze';
-    ui.centerTop.classList.toggle('hidden', !showAnalysis);
-    ui.evidenceRow.classList.toggle('hidden', !showAnalysis);
+    ui.analysisMain.classList.toggle('hidden', !showAnalysis);
     ui.chatColumn.classList.toggle('hidden', !showAnalysis);
     ui.capturePanel.classList.toggle('hidden', tab !== 'capture');
     ui.exportPanel.classList.toggle('hidden', tab !== 'export');
+  }
+
+  const screenBtnBase =
+    'px-2.5 py-1 text-[9px] font-[var(--font-display)] tracking-[0.22em] uppercase rounded transition-all';
+  const screenBtnActive =
+    `${screenBtnBase} text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/30`;
+  const screenBtnInactive = `${screenBtnBase} text-white/40 hover:text-white/70 border border-transparent`;
+
+  function setAnalyzeScreenButtonState(button: HTMLButtonElement, isActive: boolean) {
+    button.className = isActive ? screenBtnActive : screenBtnInactive;
+  }
+
+  function mountAnalyzeScreen(screen: AnalyzeScreen) {
+    if (screen === 'overview') {
+      ui.overviewTopLayout.replaceChildren(ui.sessionsPanel, ui.timelinePanel, ui.sessionsSplitHandle);
+      ui.overviewLayout.replaceChildren(ui.overviewTopLayout, ui.evidencePanel, ui.overviewEvidenceHandle);
+      ui.analyzeScreenHost.replaceChildren(ui.overviewLayout, ui.welcomePanel);
+      return;
+    }
+
+    if (screen === 'sessions') {
+      ui.sessionsLayout.replaceChildren(ui.sessionsPanel, ui.sessionKeyPanel, ui.sessionsSplitHandle);
+      ui.analyzeScreenHost.replaceChildren(ui.sessionsLayout, ui.welcomePanel);
+      return;
+    }
+
+    if (screen === 'timeline') {
+      ui.analyzeScreenHost.replaceChildren(ui.timelinePanel, ui.welcomePanel);
+      return;
+    }
+
+    if (screen === 'evidence') {
+      ui.analyzeScreenHost.replaceChildren(ui.evidencePanel, ui.welcomePanel);
+      return;
+    }
+
+    ui.analyzeScreenHost.replaceChildren(ui.insightsPanel, ui.welcomePanel);
+  }
+
+  function setAnalyzeScreen(screen: AnalyzeScreen) {
+    analyzeScreen = screen;
+    setAnalyzeScreenButtonState(ui.analyzeScreenOverviewButton, screen === 'overview');
+    setAnalyzeScreenButtonState(ui.analyzeScreenSessionsButton, screen === 'sessions');
+    setAnalyzeScreenButtonState(ui.analyzeScreenTimelineButton, screen === 'timeline');
+    setAnalyzeScreenButtonState(ui.analyzeScreenEvidenceButton, screen === 'evidence');
+    setAnalyzeScreenButtonState(ui.analyzeScreenInsightsButton, screen === 'insights');
+    ui.analyzeScreenLabel.textContent = screen.toUpperCase();
+    mountAnalyzeScreen(screen);
+    updateTimelineUI();
+    if (analysis) {
+      renderInsights();
+      renderSessionKey();
+    }
   }
 
   let explanationBaseUrl =
@@ -223,6 +281,22 @@ async function initApp() {
     if (!ts) return '—';
     return new Date(ts * 1000).toISOString().replace('T', ' ').replace('Z', 'Z');
   };
+
+  function timelineSearchText(event: AnalysisArtifact['timeline'][number]): string {
+    const http = event.meta?.http;
+    const parts = [
+      event.kind,
+      event.session_id,
+      event.summary,
+      event.meta?.dns_name,
+      event.meta?.sni,
+      http?.method,
+      http?.host ?? undefined,
+      http?.uri ?? undefined,
+      `#${event.evidence_frame}`,
+    ].filter(Boolean) as string[];
+    return parts.join(' ').toLowerCase();
+  }
 
   const formatBytes = (bytes: number) => {
     if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -421,6 +495,7 @@ async function initApp() {
     analysisCache.set(cacheKey, analysis);
     captureSessionId = cacheKey;
     selectedSessionId = null;
+    setAnalyzeScreen('overview');
     render();
     setActiveTab('analyze');
   }
@@ -469,9 +544,13 @@ async function initApp() {
     ui.selectedEvidenceLabel.textContent = 'Selected: —';
     ui.sessionsList.replaceChildren();
     ui.timelineList.replaceChildren();
+    ui.sessionsCount.textContent = '0';
+    ui.timelineCount.textContent = '0';
     ui.analysisSummary.replaceChildren();
     setAnalysisDetail('');
     ui.evidenceList.replaceChildren();
+    ui.sessionKeyBody.replaceChildren();
+    ui.insightsBody.replaceChildren();
     sessionElements.clear();
     lastAnalysisRef = null;
     captureSessionId = null;
@@ -584,6 +663,7 @@ async function initApp() {
 
   function renderSessions(sessions: AnalysisArtifact['sessions']) {
     sessionElements.clear();
+    ui.sessionsCount.textContent = String(sessions.length);
     ui.sessionsList.replaceChildren(
       ...sessions.map((session, index) => {
         const item = el('button', {
@@ -648,7 +728,11 @@ async function initApp() {
     }
   }
 
-  function renderTimeline(timeline: AnalysisArtifact['timeline']) {
+  function renderTimeline(
+    timeline: AnalysisArtifact['timeline'],
+    options?: { showSessionId?: boolean }
+  ) {
+    const showSessionId = options?.showSessionId ?? false;
     if (!timeline.length) {
       ui.timelineList.replaceChildren(
         el('div', {
@@ -662,13 +746,44 @@ async function initApp() {
       return;
     }
 
+    const sorted = [...timeline].sort((a, b) =>
+      a.ts !== b.ts ? a.ts - b.ts : a.evidence_frame - b.evidence_frame
+    );
+
     ui.timelineList.replaceChildren(
-      ...timeline.slice(0, 200).map((event, index) => {
-        const row = el('div', { 
-          className: 'group relative pl-4 pb-3 border-l border-[var(--app-line)] hover:border-[var(--accent-cyan)]/30 transition-colors animate-slide-in',
-          attrs: { style: `animation-delay: ${index * 0.03}s` },
+      ...sorted.slice(0, 200).map((event, index) => {
+        const row = el('button', {
+          className:
+            'group relative w-full text-left pl-4 pb-3 border-l border-[var(--app-line)] ' +
+            'hover:border-[var(--accent-cyan)]/30 transition-colors animate-slide-in',
+          attrs: {
+            type: 'button',
+            style: `animation-delay: ${index * 0.03}s`,
+            'data-timeline-session-id': event.session_id,
+          },
         });
-        
+
+        const metaRow = el('div', { className: 'mt-1 flex items-center gap-2 flex-wrap' });
+        const kindBadge = el('span', {
+          className: 'px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/45 uppercase tracking-wider',
+          text: event.kind,
+        });
+        metaRow.append(kindBadge);
+        if (showSessionId) {
+          metaRow.append(
+            el('span', {
+              className: 'px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/35 truncate max-w-[140px]',
+              text: event.session_id,
+            })
+          );
+        }
+        metaRow.append(
+          el('span', {
+            className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-white/30',
+            text: `FRAME #${event.evidence_frame}`,
+          })
+        );
+
         // Timeline dot
         const dot = el('div', {
           className: 'absolute left-0 top-0 -translate-x-1/2 size-2 rounded-full bg-[var(--app-surface)] border-2 border-[var(--accent-cyan)]/50 group-hover:border-[var(--accent-cyan)] group-hover:bg-[var(--accent-cyan)]/20 transition-colors',
@@ -685,17 +800,65 @@ async function initApp() {
           className: 'text-sm text-white/80 leading-relaxed group-hover:text-white/95 transition-colors break-words overflow-hidden', 
           text: event.summary 
         });
-        
-        // Evidence reference
-        const evidence = el('div', {
-          className: 'mt-1 text-[9px] font-[var(--font-mono)] tracking-wider text-white/30',
-          text: `FRAME #${event.evidence_frame}`,
-        });
-        
-        row.append(dot, timestamp, summary, evidence);
-        return row;
+
+        row.append(dot, timestamp, summary, metaRow);
+        return row as unknown as HTMLElement;
       })
     );
+  }
+
+  function updateTimelineControlsForScope() {
+    const base = 'px-2 py-1 text-[9px] font-[var(--font-mono)] tracking-wider transition-colors';
+    ui.timelineScopeSessionButton.className =
+      `${base} ` +
+      (timelineScope === 'session'
+        ? 'text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10'
+        : 'text-white/40 hover:text-white/70');
+    ui.timelineScopeAllButton.className =
+      `${base} ` +
+      (timelineScope === 'all'
+        ? 'text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10'
+        : 'text-white/40 hover:text-white/70');
+  }
+
+  function populateTimelineKinds() {
+    if (!analysis) return;
+    const counts = new Map<string, number>();
+    for (const event of analysis.timeline ?? []) {
+      counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
+    }
+    const kinds = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+
+    const current = timelineKindFilter;
+    ui.timelineKindSelect.replaceChildren(new Option('ALL', 'all'));
+    for (const [kind, count] of kinds) {
+      ui.timelineKindSelect.append(new Option(`${kind.toUpperCase()} (${count})`, kind));
+    }
+
+    if (current !== 'all' && !counts.has(current)) {
+      timelineKindFilter = 'all';
+    }
+    ui.timelineKindSelect.value = timelineKindFilter;
+  }
+
+  function updateTimelineUI() {
+    if (!analysis || !analysis.sessions.length) return;
+
+    const selected = selectedSessionId
+      ? analysis.sessions.find((s) => s.id === selectedSessionId) ?? analysis.sessions[0]
+      : analysis.sessions[0];
+
+    const needle = timelineSearchQuery.trim().toLowerCase();
+    const events = (analysis.timeline ?? []).filter((event) => {
+      if (timelineScope === 'session' && event.session_id !== selected.id) return false;
+      if (timelineKindFilter !== 'all' && event.kind !== timelineKindFilter) return false;
+      if (needle && !timelineSearchText(event).includes(needle)) return false;
+      return true;
+    });
+
+    ui.sessionIdLabel.textContent = timelineScope === 'all' ? 'SCOPE: ALL' : `Session: ${selected.id}`;
+    ui.timelineCount.textContent = events.length > 200 ? '200+' : String(events.length);
+    renderTimeline(events, { showSessionId: timelineScope === 'all' });
   }
 
   function renderEvidence(selectedSession: AnalysisArtifact['sessions'][number]) {
@@ -775,6 +938,249 @@ async function initApp() {
     );
   }
 
+  function renderSessionKey(selectedSession?: AnalysisArtifact['sessions'][number]) {
+    if (!analysis || !analysis.sessions.length) {
+      ui.sessionKeyBody.replaceChildren(
+        el('div', {
+          className: 'flex flex-col items-center justify-center py-8 text-center',
+          children: [
+            el('div', { className: 'data-label mb-1', text: 'NO SESSION' }),
+            el('div', { className: 'text-[10px] text-white/30', text: 'Select a session to view details' }),
+          ],
+        })
+      );
+      return;
+    }
+
+    const session =
+      selectedSession ??
+      (selectedSessionId
+        ? analysis.sessions.find((s) => s.id === selectedSessionId) ?? analysis.sessions[0]
+        : analysis.sessions[0]);
+
+    const a = `${session.endpoints.a.ip}${session.endpoints.a.port ? `:${session.endpoints.a.port}` : ''}`;
+    const b = `${session.endpoints.b.ip}${session.endpoints.b.port ? `:${session.endpoints.b.port}` : ''}`;
+    const duration =
+      typeof session.duration_seconds === 'number' && Number.isFinite(session.duration_seconds)
+        ? `${session.duration_seconds.toFixed(2)}s`
+        : '—';
+
+    const flags = (session.rule_flags ?? []).slice(0, 12);
+    const protocols = (session.protocols ?? []).slice().sort((x, y) => y.count - x.count).slice(0, 10);
+
+    const card = (label: string, value: string) =>
+      el('div', {
+        className: 'data-card rounded p-3',
+        children: [
+          el('div', { className: 'data-label mb-1', text: label }),
+          el('div', { className: 'text-[12px] font-[var(--font-mono)] text-white/75 break-words', text: value }),
+        ],
+      });
+
+    const flagsEl =
+      flags.length > 0
+        ? el('div', {
+            className: 'flex flex-wrap gap-2',
+            children: flags.map((flag) =>
+              el('span', {
+                className: 'px-2 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/45 uppercase tracking-wider',
+                text: flag,
+              })
+            ),
+          })
+        : el('div', { className: 'text-[10px] text-white/30', text: 'No flags' });
+
+    const protocolsEl =
+      protocols.length > 0
+        ? el('div', {
+            className: 'space-y-2',
+            children: protocols.map((p) =>
+              el('div', {
+                className: 'flex items-center justify-between gap-3',
+                children: [
+                  el('div', { className: 'text-[11px] font-[var(--font-mono)] text-white/60 truncate', text: p.chain }),
+                  el('div', { className: 'text-[10px] font-[var(--font-mono)] text-white/35 tabular-nums', text: String(p.count) }),
+                ],
+              })
+            ),
+          })
+        : el('div', { className: 'text-[10px] text-white/30', text: 'No protocol breakdown' });
+
+    ui.sessionKeyBody.replaceChildren(
+      el('div', {
+        className: 'space-y-4',
+        children: [
+          el('div', { className: 'data-label', text: `SESSION ${session.id}` }),
+          el('div', {
+            className: 'grid grid-cols-1 sm:grid-cols-2 gap-3',
+            children: [
+              card('Transport', session.transport.toUpperCase()),
+              card('Duration', duration),
+              card('Packets', String(session.packet_count)),
+              card('Bytes', formatBytes(session.byte_count)),
+              card('Endpoint A', a),
+              card('Endpoint B', b),
+              card('First Seen', formatTimestamp(session.first_ts)),
+              card('Last Seen', formatTimestamp(session.last_ts)),
+            ],
+          }),
+          el('div', {
+            className: 'data-card rounded p-3',
+            children: [el('div', { className: 'data-label mb-2', text: 'Flags' }), flagsEl],
+          }),
+          el('div', {
+            className: 'data-card rounded p-3',
+            children: [el('div', { className: 'data-label mb-2', text: 'Top Protocol Chains' }), protocolsEl],
+          }),
+        ],
+      })
+    );
+  }
+
+  function renderInsights() {
+    if (!analysis || !analysis.sessions.length) {
+      ui.insightsBody.replaceChildren(
+        el('div', {
+          className: 'flex flex-col items-center justify-center py-8 text-center',
+          children: [
+            el('div', { className: 'data-label mb-1', text: 'NO DATA' }),
+            el('div', { className: 'text-[10px] text-white/30', text: 'Load a capture to generate insights' }),
+          ],
+        })
+      );
+      return;
+    }
+
+    const sessions = analysis.sessions;
+    const totalPackets = sessions.reduce((sum, s) => sum + (s.packet_count ?? 0), 0);
+    const totalBytes = sessions.reduce((sum, s) => sum + (s.byte_count ?? 0), 0);
+
+    const transportCounts = sessions.reduce(
+      (acc, s) => {
+        acc[s.transport] = (acc[s.transport] ?? 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+
+    const flagCounts = new Map<string, number>();
+    for (const s of sessions) {
+      for (const f of s.rule_flags ?? []) {
+        flagCounts.set(f, (flagCounts.get(f) ?? 0) + 1);
+      }
+    }
+    const topFlags = [...flagCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+
+    const kinds = new Map<string, number>();
+    for (const e of analysis.timeline ?? []) {
+      kinds.set(e.kind, (kinds.get(e.kind) ?? 0) + 1);
+    }
+    const topKinds = [...kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+
+    const topSessions = [...sessions].sort((a, b) => b.byte_count - a.byte_count).slice(0, 8);
+
+    const stat = (label: string, value: string) =>
+      el('div', {
+        className: 'data-card rounded p-3',
+        children: [
+          el('div', { className: 'data-label mb-1', text: label }),
+          el('div', { className: 'text-[13px] font-[var(--font-mono)] text-white/75', text: value }),
+        ],
+      });
+
+    ui.insightsBody.replaceChildren(
+      el('div', {
+        className: 'space-y-4',
+        children: [
+          el('div', {
+            className: 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3',
+            children: [
+              stat('Sessions', String(sessions.length)),
+              stat('Packets', String(totalPackets)),
+              stat('Bytes', formatBytes(totalBytes)),
+              stat('Timeline Events', String((analysis.timeline ?? []).length)),
+            ],
+          }),
+          el('div', {
+            className: 'data-card rounded p-3',
+            children: [
+              el('div', { className: 'data-label mb-2', text: 'Transport Mix' }),
+              el('div', {
+                className: 'flex flex-wrap gap-2',
+                children: Object.entries(transportCounts).map(([k, v]) =>
+                  el('span', {
+                    className: 'px-2 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/45 uppercase tracking-wider',
+                    text: `${k.toUpperCase()}: ${v}`,
+                  })
+                ),
+              }),
+            ],
+          }),
+          el('div', {
+            className: 'grid grid-cols-1 lg:grid-cols-2 gap-3',
+            children: [
+              el('div', {
+                className: 'data-card rounded p-3',
+                children: [
+                  el('div', { className: 'data-label mb-2', text: 'Top Sessions (Bytes)' }),
+                  el('div', {
+                    className: 'space-y-2',
+                    children: topSessions.map((s) =>
+                      el('div', {
+                        className: 'flex items-center justify-between gap-3',
+                        children: [
+                          el('div', { className: 'text-[11px] font-[var(--font-mono)] text-white/60 truncate', text: s.id }),
+                          el('div', { className: 'text-[10px] font-[var(--font-mono)] text-white/35 tabular-nums', text: formatBytes(s.byte_count) }),
+                        ],
+                      })
+                    ),
+                  }),
+                ],
+              }),
+              el('div', {
+                className: 'data-card rounded p-3',
+                children: [
+                  el('div', { className: 'data-label mb-2', text: 'Timeline Kinds' }),
+                  topKinds.length
+                    ? el('div', {
+                        className: 'space-y-2',
+                        children: topKinds.map(([kind, count]) =>
+                          el('div', {
+                            className: 'flex items-center justify-between gap-3',
+                            children: [
+                              el('div', { className: 'text-[11px] font-[var(--font-mono)] text-white/60 truncate', text: kind }),
+                              el('div', { className: 'text-[10px] font-[var(--font-mono)] text-white/35 tabular-nums', text: String(count) }),
+                            ],
+                          })
+                        ),
+                      })
+                    : el('div', { className: 'text-[10px] text-white/30', text: 'No timeline events' }),
+                ],
+              }),
+            ],
+          }),
+          el('div', {
+            className: 'data-card rounded p-3',
+            children: [
+              el('div', { className: 'data-label mb-2', text: 'Top Flags' }),
+              topFlags.length
+                ? el('div', {
+                    className: 'flex flex-wrap gap-2',
+                    children: topFlags.map(([flag, count]) =>
+                      el('span', {
+                        className: 'px-2 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/45 uppercase tracking-wider',
+                        text: `${flag} (${count})`,
+                      })
+                    ),
+                  })
+                : el('div', { className: 'text-[10px] text-white/30', text: 'No flags' }),
+            ],
+          }),
+        ],
+      })
+    );
+  }
+
   function updateSelectedSessionUI() {
     if (!analysis || !analysis.sessions.length) return;
 
@@ -784,12 +1190,11 @@ async function initApp() {
     updateSessionSelection();
 
     const selected = sessions.find((s) => s.id === selectedSessionId) ?? sessions[0];
-    ui.sessionIdLabel.textContent = `Session: ${selected.id}`;
-
-    const timeline = (analysis.timeline ?? []).filter((entry) => entry.session_id === selected.id);
-    renderTimeline(timeline);
+    selectedSessionId = selected.id;
+    updateTimelineUI();
     renderEvidence(selected);
     renderAnalysisSummary(selected);
+    renderSessionKey(selected);
     setAnalysisDetail('Fetching explanation…');
     void updateExplanationFromService(selected.id);
   }
@@ -810,11 +1215,21 @@ async function initApp() {
 
     if (analysis !== lastAnalysisRef) {
       renderSessions(analysis.sessions);
+      populateTimelineKinds();
+      renderInsights();
       lastAnalysisRef = analysis;
     }
 
     updateSelectedSessionUI();
   }
+
+  ui.analyzeScreenOverviewButton.addEventListener('click', () => setAnalyzeScreen('overview'));
+  ui.analyzeScreenSessionsButton.addEventListener('click', () => setAnalyzeScreen('sessions'));
+  ui.analyzeScreenTimelineButton.addEventListener('click', () => setAnalyzeScreen('timeline'));
+  ui.analyzeScreenEvidenceButton.addEventListener('click', () => setAnalyzeScreen('evidence'));
+  ui.analyzeScreenInsightsButton.addEventListener('click', () => setAnalyzeScreen('insights'));
+
+  setAnalyzeScreen('overview');
 
   ui.sessionsList.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
@@ -825,6 +1240,49 @@ async function initApp() {
     selectedSessionId = id;
     updateSelectedSessionUI();
   });
+
+  ui.timelineList.addEventListener('click', (event) => {
+    if (!analysis) return;
+    const target = event.target as HTMLElement | null;
+    const row = target?.closest('[data-timeline-session-id]') as HTMLElement | null;
+    const sessionId = row?.getAttribute('data-timeline-session-id');
+    if (!sessionId) return;
+    if (sessionId === selectedSessionId) return;
+    selectedSessionId = sessionId;
+    updateSelectedSessionUI();
+  });
+
+  ui.timelineScopeSessionButton.addEventListener('click', () => {
+    timelineScope = 'session';
+    updateTimelineControlsForScope();
+    updateTimelineUI();
+  });
+
+  ui.timelineScopeAllButton.addEventListener('click', () => {
+    timelineScope = 'all';
+    updateTimelineControlsForScope();
+    updateTimelineUI();
+  });
+
+  ui.timelineKindSelect.addEventListener('change', () => {
+    timelineKindFilter = ui.timelineKindSelect.value || 'all';
+    updateTimelineUI();
+  });
+
+  ui.timelineSearchInput.addEventListener('input', () => {
+    timelineSearchQuery = ui.timelineSearchInput.value;
+    updateTimelineUI();
+  });
+
+  ui.timelineSearchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      timelineSearchQuery = '';
+      ui.timelineSearchInput.value = '';
+      updateTimelineUI();
+    }
+  });
+
+  updateTimelineControlsForScope();
 
   ui.explorerList.addEventListener('click', async (event) => {
     const target = event.target as HTMLElement | null;
@@ -867,6 +1325,13 @@ async function initApp() {
         analysisCache.set(captureSessionId, analysis);
       }
       selectedSessionId = null;
+      timelineScope = 'session';
+      timelineSearchQuery = '';
+      timelineKindFilter = 'all';
+      ui.timelineSearchInput.value = '';
+      populateTimelineKinds();
+      updateTimelineControlsForScope();
+      setAnalyzeScreen('overview');
       render();
       setActiveTab('analyze');
       void refreshExplorerCaptures();

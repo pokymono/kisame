@@ -13,11 +13,12 @@ type OpenPcapAndAnalyzeResult =
 function runCommand(
   command: string,
   args: string[],
-  options: { cwd?: string } = {}
+  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
+      env: options.env,
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -44,6 +45,23 @@ function getPythonCommand(): string {
 function getEngineEntryPath(): string {
   const appPath = app.getAppPath();
   return path.resolve(appPath, '..', '..', 'services', 'forensic-engine', 'main.py');
+}
+
+function resolveLocalTsharkPath(): string | null {
+  const fromEnv = (process.env.TSHARK_PATH || '').trim();
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+
+  if (process.platform === 'win32') {
+    const candidates = [
+      'C:\\\\Program Files\\\\Wireshark\\\\tshark.exe',
+      'C:\\\\Program Files (x86)\\\\Wireshark\\\\tshark.exe',
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) return p;
+    }
+  }
+
+  return null;
 }
 
 type KisameConfig = {
@@ -211,8 +229,16 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
     // Fallback: local Python engine (still uses tshark locally).
     const python = getPythonCommand();
     const enginePath = getEngineEntryPath();
+    const localTshark = resolveLocalTsharkPath();
+    const childEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...(localTshark ? { TSHARK_PATH: localTshark } : {}),
+    };
 
     const args: string[] = [enginePath, 'analyze', pcapPath];
+    if (localTshark) {
+      args.push('--tshark', localTshark);
+    }
     if (process.env.KISAME_MAX_PACKETS) {
       args.push('--max-packets', process.env.KISAME_MAX_PACKETS);
     }
@@ -220,10 +246,15 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
       args.push('--skip-hash');
     }
 
-    const { exitCode, stdout, stderr } = await runCommand(python, args, { cwd: app.getAppPath() });
+    const { exitCode, stdout, stderr } = await runCommand(python, args, {
+      cwd: app.getAppPath(),
+      env: childEnv,
+    });
     if (exitCode !== 0) {
       throw new Error(
-        `Bun analyze failed (${(e as Error).message ?? String(e)}), and local engine also failed (exit ${exitCode}).\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}`
+        `Bun analyze failed (${(e as Error).message ?? String(e)}), and local engine also failed (exit ${exitCode}).\n\nLocal tshark: ${
+          localTshark ?? 'not found (set TSHARK_PATH to C:\\\\Program Files\\\\Wireshark\\\\tshark.exe)'
+        }\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}`
       );
     }
     let analysis: unknown;
