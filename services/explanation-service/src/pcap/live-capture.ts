@@ -5,6 +5,8 @@ import { utcNowIso } from '../utils/response';
 import { registerPcapFile } from './session-manager';
 import { resolveTsharkPath } from './tshark';
 
+const isWindows = process.platform === 'win32';
+
 export type CaptureInterface = {
   id: string;
   name: string;
@@ -42,9 +44,10 @@ function parseInterfaceLine(line: string): CaptureInterface | null {
 export async function listCaptureInterfaces(): Promise<CaptureInterface[]> {
   const tsharkPath = resolveTsharkPath();
   if (!tsharkPath) {
-    throw new Error(
-      'tshark was not found. Install Wireshark or set TSHARK_PATH to the tshark binary (macOS default: /Applications/Wireshark.app/Contents/MacOS/tshark).'
-    );
+    const hint = isWindows
+      ? 'Install Wireshark (https://wireshark.org) or set TSHARK_PATH to the tshark.exe path.'
+      : 'Install Wireshark or set TSHARK_PATH to the tshark binary.';
+    throw new Error(`tshark was not found. ${hint}`);
   }
 
   const proc = Bun.spawn([tsharkPath, '-D'], { stdout: 'pipe', stderr: 'pipe' });
@@ -62,20 +65,35 @@ export async function listCaptureInterfaces(): Promise<CaptureInterface[]> {
 }
 
 function chooseDefaultInterface(interfaces: CaptureInterface[]): CaptureInterface {
-  const isLikelyGood = (name: string) =>
-    /^en\d+$/i.test(name) || /^bridge\d+$/i.test(name);
+  // Likely good interface patterns by platform
+  const isLikelyGood = (name: string) => {
+    if (isWindows) {
+      // Windows: Prefer Ethernet or Wi-Fi adapters
+      return /ethernet/i.test(name) || /wi-?fi/i.test(name) || /wireless/i.test(name);
+    }
+    // macOS/Linux: en0, eth0, bridge0, etc.
+    return /^en\d+$/i.test(name) || /^eth\d+$/i.test(name) || /^bridge\d+$/i.test(name);
+  };
 
-  const isNoisyOrRestricted = (name: string) =>
-    /^lo\d*$/i.test(name) ||
-    /^utun\d+$/i.test(name) ||
-    /^awdl\d+$/i.test(name) ||
-    /^llw\d+$/i.test(name) ||
-    /^p2p\d+$/i.test(name);
+  const isNoisyOrRestricted = (name: string) => {
+    if (isWindows) {
+      // Windows: Skip loopback and virtual adapters
+      return /loopback/i.test(name) || /npcap/i.test(name) || /virtual/i.test(name);
+    }
+    // macOS/Linux: Skip loopback, VPN tunnels, and Apple-specific interfaces
+    return (
+      /^lo\d*$/i.test(name) ||
+      /^utun\d+$/i.test(name) ||
+      /^awdl\d+$/i.test(name) ||
+      /^llw\d+$/i.test(name) ||
+      /^p2p\d+$/i.test(name)
+    );
+  };
 
-  const preferred = interfaces.find((iface) => isLikelyGood(iface.name));
+  const preferred = interfaces.find((iface) => isLikelyGood(iface.name) || isLikelyGood(iface.description ?? ''));
   if (preferred) return preferred;
 
-  const nonRestricted = interfaces.find((iface) => !isNoisyOrRestricted(iface.name));
+  const nonRestricted = interfaces.find((iface) => !isNoisyOrRestricted(iface.name) && !isNoisyOrRestricted(iface.description ?? ''));
   return nonRestricted ?? interfaces[0]!;
 }
 
@@ -90,9 +108,10 @@ export type StartCaptureOptions = {
 export async function startLiveCapture(opts: StartCaptureOptions): Promise<LiveCapture> {
   const tsharkPath = resolveTsharkPath();
   if (!tsharkPath) {
-    throw new Error(
-      'tshark was not found. Install Wireshark or set TSHARK_PATH to the tshark binary (macOS default: /Applications/Wireshark.app/Contents/MacOS/tshark).'
-    );
+    const hint = isWindows
+      ? 'Install Wireshark (https://wireshark.org) or set TSHARK_PATH to the tshark.exe path.'
+      : 'Install Wireshark or set TSHARK_PATH to the tshark binary.';
+    throw new Error(`tshark was not found. ${hint}`);
   }
 
   const interfaces = await listCaptureInterfaces();
@@ -188,8 +207,10 @@ export async function stopLiveCapture(captureId: string): Promise<{
   }
 
   try {
-    capture.process.kill('SIGINT');
+    // Windows doesn't support SIGINT; use SIGTERM or just kill
+    capture.process.kill(isWindows ? 'SIGTERM' : 'SIGINT');
   } catch {
+    // Ignore kill errors
   }
 
   const exitCode = await capture.process.exited;
