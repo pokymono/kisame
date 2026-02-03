@@ -15,17 +15,17 @@ function initApp() {
   // | Evidence / Packet References                           |
   // ---------------------------------------------------------
 
-  root.innerHTML = `
+	  root.innerHTML = `
     <div class="h-screen flex flex-col bg-neutral-900 text-gray-200 font-sans overflow-hidden">
       
       <!-- 1. Top Bar -->
       <header class="h-14 border-b border-neutral-800 flex items-center justify-between px-4 bg-neutral-900 shrink-0">
         <div class="flex items-center gap-4">
           <h1 class="font-bold text-lg tracking-tight text-white">Kisame</h1>
-          <span class="text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700">No Capture Loaded</span>
+          <span id="captureBadge" class="text-xs px-2 py-0.5 rounded bg-neutral-800 text-neutral-400 border border-neutral-700">No Capture Loaded</span>
         </div>
         <div class="flex items-center gap-2">
-           <button class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors">Open PCAP</button>
+           <button id="openPcapBtn" class="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded transition-colors">Open PCAP</button>
            <button class="p-1.5 hover:bg-neutral-800 rounded text-neutral-400">
              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
            </button>
@@ -40,36 +40,9 @@ function initApp() {
           <div class="h-8 border-b border-neutral-800 flex items-center px-3 bg-neutral-900/80">
             <span class="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Sessions</span>
           </div>
-          <div class="flex-1 overflow-y-auto p-2 space-y-1">
-            <!-- Placeholder Session Items -->
-            <div class="p-3 rounded bg-neutral-800/50 border border-neutral-700/50 hover:bg-neutral-800 cursor-pointer transition-colors group">
-              <div class="flex justify-between items-center mb-1">
-                <span class="text-xs font-mono text-emerald-400">TCP</span>
-                <span class="text-[10px] text-neutral-500">10:42:01</span>
-              </div>
-              <div class="text-sm font-medium text-gray-300">192.168.1.104 <span class="text-neutral-500">→</span> 8.8.8.8</div>
-              <div class="mt-1 text-[10px] text-neutral-500 flex gap-2">
-                <span>12 pkts</span>
-                <span>2.4kb</span>
-              </div>
-            </div>
-             <div class="p-3 rounded border border-transparent hover:bg-neutral-800 cursor-pointer transition-colors">
-              <div class="flex justify-between items-center mb-1">
-                <span class="text-xs font-mono text-blue-400">UDP</span>
-                <span class="text-[10px] text-neutral-500">10:42:05</span>
-              </div>
-              <div class="text-sm font-medium text-gray-400">192.168.1.104 <span class="text-neutral-500">→</span> 10.0.0.5</div>
-               <div class="mt-1 text-[10px] text-neutral-500 flex gap-2">
-                <span>4 pkts</span>
-                <span>1.1kb</span>
-              </div>
-            </div>
-             <div class="p-3 rounded border border-transparent hover:bg-neutral-800 cursor-pointer transition-colors">
-              <div class="flex justify-between items-center mb-1">
-                <span class="text-xs font-mono text-purple-400">TLS</span>
-                <span class="text-[10px] text-neutral-500">10:42:15</span>
-              </div>
-              <div class="text-sm font-medium text-gray-400">192.168.1.104 <span class="text-neutral-500">→</span> 152.4.2.1</div>
+          <div id="sessionsList" class="flex-1 overflow-y-auto p-2 space-y-1">
+            <div class="p-3 rounded border border-dashed border-neutral-800 text-sm text-neutral-500">
+              Open a PCAP to view sessions.
             </div>
           </div>
         </aside>
@@ -78,36 +51,10 @@ function initApp() {
         <section class="flex-1 border-r border-neutral-800 flex flex-col min-w-0 bg-neutral-900">
            <div class="h-8 border-b border-neutral-800 flex items-center px-3 bg-neutral-900/80 justify-between">
             <span class="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Timeline</span>
-            <span class="text-[10px] text-neutral-500">Session ID: #1042</span>
+	            <span id="sessionIdLabel" class="text-[10px] text-neutral-500">Session ID: —</span>
           </div>
-          <div class="flex-1 overflow-y-auto p-4">
-             <div class="flex flex-col gap-4 relative">
-                <!-- Vertical Line -->
-                <div class="absolute left-3 top-2 bottom-2 w-px bg-neutral-800"></div>
-
-                <!-- Timeline Events -->
-                <div class="pl-8 relative">
-                   <div class="absolute left-[9px] top-1.5 w-2 h-2 rounded-full bg-emerald-500/50 border border-emerald-500"></div>
-                   <div class="text-xs text-neutral-500 mb-0.5 font-mono">10:42:01.0024</div>
-                   <div class="text-sm text-gray-300">Connection Established (SYN-ACK)</div>
-                </div>
-
-                <div class="pl-8 relative">
-                   <div class="absolute left-[9px] top-1.5 w-2 h-2 rounded-full bg-neutral-700 border border-neutral-600"></div>
-                   <div class="text-xs text-neutral-500 mb-0.5 font-mono">10:42:01.0500</div>
-                   <div class="text-sm text-gray-400">Client Hello (TLS 1.2)</div>
-                   <div class="mt-1 p-2 bg-neutral-800/50 rounded border border-neutral-800 text-xs font-mono text-neutral-400">
-                      SNI: google.com
-                      Cipher Suites: [17]
-                   </div>
-                </div>
-
-                 <div class="pl-8 relative">
-                   <div class="absolute left-[9px] top-1.5 w-2 h-2 rounded-full bg-blue-500/50 border border-blue-500"></div>
-                   <div class="text-xs text-neutral-500 mb-0.5 font-mono">10:42:01.1200</div>
-                   <div class="text-sm text-gray-300">Server Hello</div>
-                </div>
-             </div>
+          <div id="timelineList" class="flex-1 overflow-y-auto p-4">
+            <div class="text-sm text-neutral-500">Select a session to view fact-only timeline events.</div>
           </div>
         </section>
 
@@ -121,15 +68,8 @@ function initApp() {
                    Analysis
                  </span>
               </div>
-              <div class="prose prose-invert prose-sm">
-                <p class="text-gray-300 leading-relaxed text-sm">
-                  This session represents a standard <span class="text-purple-300">HTTPS handshake</span>. The client initiated a connection to <code class="bg-neutral-800 px-1 py-0.5 rounded text-neutral-300">8.8.8.8</code> on port 443. The handshake completed successfully in 120ms.
-                </p>
-                <div class="mt-4 p-3 bg-blue-900/20 border border-blue-500/20 rounded">
-                   <p class="text-xs text-blue-200">
-                     <strong>Note:</strong> No irregularities detected in the cipher suite negotiation.
-                   </p>
-                </div>
+              <div id="analysisText" class="text-sm text-neutral-300 leading-relaxed">
+                Open a PCAP and select a session to see an evidence-anchored explanation.
               </div>
            </div>
            
@@ -162,37 +102,260 @@ function initApp() {
           <div class="h-8 border-b border-neutral-800 flex items-center px-3 bg-neutral-900/50 justify-between">
             <span class="text-xs font-semibold text-neutral-400 uppercase tracking-wider">Packet Evidence</span>
             <div class="flex gap-2 text-[10px] text-neutral-500 font-mono">
-               <span>Selected: Pkt #1042</span>
-               <span>Offset: 0x0042</span>
+	               <span id="selectedEvidenceLabel">Selected: —</span>
+	               <span class="opacity-50">Evidence only</span>
             </div>
           </div>
-          <div class="flex-1 overflow-auto font-mono text-xs p-2 text-neutral-400">
-             <div class="grid grid-cols-[60px_100px_1fr] gap-x-4 border-b border-neutral-800/50 pb-1 mb-1 text-neutral-600">
-                <div>#</div>
-                <div>Time</div>
-                <div>Info</div>
-             </div>
-             <div class="grid grid-cols-[60px_100px_1fr] gap-x-4 hover:bg-neutral-800/50 cursor-pointer text-neutral-500">
-                <div>1</div>
-                <div>0.000000</div>
-                <div>Standard query 0x421a A google.com</div>
-             </div>
-             <div class="grid grid-cols-[60px_100px_1fr] gap-x-4 bg-blue-900/20 text-blue-200 cursor-pointer">
-                <div>2</div>
-                <div>0.045120</div>
-                <div>Standard query response 0x421a A google.com A 142.250.1.100</div>
-             </div>
-              <div class="grid grid-cols-[60px_100px_1fr] gap-x-4 hover:bg-neutral-800/50 cursor-pointer text-neutral-500">
-                <div>3</div>
-                <div>0.045200</div>
-                <div>Subsequent packet data...</div>
-             </div>
+          <div id="evidenceList" class="flex-1 overflow-auto font-mono text-xs p-2 text-neutral-400">
+            <div class="text-neutral-600">Evidence frames will appear here.</div>
           </div>
       </footer>
 
-    </div>
-  `;
-}
+	    </div>
+	  `;
+
+	  type AnalysisArtifact = {
+	    pcap?: {
+	      file_name?: string;
+	      packets_analyzed?: number;
+	      first_ts?: number;
+	      last_ts?: number;
+	    };
+	    sessions?: Array<{
+	      id: string;
+	      transport: string;
+	      endpoints: { a: { ip: string; port: number | null }; b: { ip: string; port: number | null } };
+	      first_ts: number;
+	      last_ts: number;
+	      packet_count: number;
+	      byte_count: number;
+	      duration_seconds?: number;
+	      evidence: { first_frame: number; last_frame: number; sample_frames: number[] };
+	      rule_flags?: string[];
+	    }>;
+	    timeline?: Array<{ ts: number; session_id: string; kind: string; summary: string; evidence_frame: number }>;
+	  };
+
+	  const openBtn = document.getElementById('openPcapBtn') as HTMLButtonElement | null;
+	  const captureBadge = document.getElementById('captureBadge');
+	  const sessionIdLabel = document.getElementById('sessionIdLabel');
+	  const selectedEvidenceLabel = document.getElementById('selectedEvidenceLabel');
+	  const sessionsList = document.getElementById('sessionsList');
+	  const timelineList = document.getElementById('timelineList');
+	  const analysisText = document.getElementById('analysisText');
+	  const evidenceList = document.getElementById('evidenceList');
+
+	  let analysis: AnalysisArtifact | null = null;
+	  let selectedSessionId: string | null = null;
+
+	  function fmtTs(ts: number | undefined) {
+	    if (!ts) return '';
+	    return new Date(ts * 1000).toISOString().replace('T', ' ').replace('Z', 'Z');
+	  }
+
+	  function fmtBytes(bytes: number) {
+	    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	    if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+	    return `${bytes} B`;
+	  }
+
+	  const explanationBaseUrl =
+	    ((import.meta as any).env?.VITE_EXPLANATION_URL as string | undefined) ??
+	    'http://localhost:8787';
+	  const explanationCache = new Map<string, string>();
+	  let explanationRequestSeq = 0;
+
+	  function escapeHtml(text: string) {
+	    return text
+	      .replaceAll('&', '&amp;')
+	      .replaceAll('<', '&lt;')
+	      .replaceAll('>', '&gt;')
+	      .replaceAll('"', '&quot;')
+	      .replaceAll("'", '&#039;');
+	  }
+
+	  async function updateExplanationFromService(sessionId: string) {
+	    if (!analysisText || !analysis) return;
+	    if (explanationCache.has(sessionId)) {
+	      analysisText.innerHTML = `<pre class="whitespace-pre-wrap text-xs text-neutral-300 leading-relaxed">${escapeHtml(
+	        explanationCache.get(sessionId)!
+	      )}</pre>`;
+	      return;
+	    }
+
+	    const requestId = ++explanationRequestSeq;
+	    try {
+	      const res = await fetch(`${explanationBaseUrl}/explain/session`, {
+	        method: 'POST',
+	        headers: { 'content-type': 'application/json' },
+	        body: JSON.stringify({ artifact: analysis, session_id: sessionId }),
+	      });
+	      if (!res.ok) return;
+	      const data = (await res.json()) as { text?: string };
+	      if (!data.text) return;
+	      explanationCache.set(sessionId, data.text);
+	      if (requestId !== explanationRequestSeq) return;
+	      analysisText.innerHTML = `<pre class="whitespace-pre-wrap text-xs text-neutral-300 leading-relaxed">${escapeHtml(
+	        data.text
+	      )}</pre>`;
+	    } catch {
+	      // Service is optional in early dev; keep local fallback.
+	    }
+	  }
+
+	  function render() {
+	    if (!captureBadge || !sessionsList || !timelineList || !analysisText || !evidenceList) return;
+
+	    if (!analysis || !analysis.sessions) {
+	      captureBadge.textContent = 'No Capture Loaded';
+	      if (sessionIdLabel) sessionIdLabel.textContent = 'Session ID: —';
+	      if (selectedEvidenceLabel) selectedEvidenceLabel.textContent = 'Selected: —';
+	      sessionsList.innerHTML =
+	        '<div class="p-3 rounded border border-dashed border-neutral-800 text-sm text-neutral-500">Open a PCAP to view sessions.</div>';
+	      timelineList.innerHTML =
+	        '<div class="text-sm text-neutral-500">Select a session to view fact-only timeline events.</div>';
+	      analysisText.textContent =
+	        'Open a PCAP and select a session to see an evidence-anchored explanation.';
+	      evidenceList.innerHTML = '<div class="text-neutral-600">Evidence frames will appear here.</div>';
+	      return;
+	    }
+
+	    captureBadge.textContent =
+	      analysis.pcap?.file_name
+	        ? `${analysis.pcap.file_name} (${analysis.pcap.packets_analyzed ?? 0} pkts)`
+	        : 'Capture Loaded';
+
+	    const sessions = analysis.sessions;
+	    if (!selectedSessionId && sessions.length > 0) selectedSessionId = sessions[0].id;
+
+	    sessionsList.innerHTML = sessions
+	      .map((s) => {
+	        const selected = s.id === selectedSessionId;
+	        const a = `${s.endpoints.a.ip}${s.endpoints.a.port ? `:${s.endpoints.a.port}` : ''}`;
+	        const b = `${s.endpoints.b.ip}${s.endpoints.b.port ? `:${s.endpoints.b.port}` : ''}`;
+	        const flags = (s.rule_flags ?? []).slice(0, 2).join(', ');
+	        return `
+	          <div data-session-id="${s.id}" class="p-3 rounded border ${
+	            selected ? 'border-blue-500/40 bg-blue-900/10' : 'border-transparent hover:bg-neutral-800'
+	          } cursor-pointer transition-colors">
+	            <div class="flex justify-between items-center mb-1">
+	              <span class="text-xs font-mono ${
+	                s.transport === 'tcp'
+	                  ? 'text-emerald-400'
+	                  : s.transport === 'udp'
+	                    ? 'text-blue-400'
+	                    : 'text-neutral-400'
+	              }">${s.transport.toUpperCase()}</span>
+	              <span class="text-[10px] text-neutral-500">${fmtTs(s.first_ts).slice(11, 19)}</span>
+	            </div>
+	            <div class="text-sm font-medium ${selected ? 'text-gray-200' : 'text-gray-400'}">${a} <span class="text-neutral-600">↔</span> ${b}</div>
+	            <div class="mt-1 text-[10px] text-neutral-500 flex gap-2">
+	              <span>${s.packet_count} pkts</span>
+	              <span>${fmtBytes(s.byte_count)}</span>
+	              ${flags ? `<span class="text-amber-300">${flags}</span>` : ''}
+	            </div>
+	          </div>
+	        `;
+	      })
+	      .join('');
+
+	    const selected = sessions.find((s) => s.id === selectedSessionId) ?? sessions[0];
+	    if (sessionIdLabel) sessionIdLabel.textContent = `Session ID: ${selected.id}`;
+
+	    const timeline = (analysis.timeline ?? []).filter((e) => e.session_id === selected.id);
+	    timelineList.innerHTML =
+	      timeline.length === 0
+	        ? '<div class="text-sm text-neutral-500">No decoded events for this session (yet).</div>'
+	        : `<div class="flex flex-col gap-2">
+	            ${timeline
+	              .slice(0, 200)
+	              .map(
+	                (e) => `
+	                  <div class="flex items-start justify-between gap-4 border-b border-neutral-800/50 pb-2">
+	                    <div class="min-w-0">
+	                      <div class="text-[10px] text-neutral-500 font-mono">${fmtTs(e.ts)}</div>
+	                      <div class="text-sm text-gray-300 truncate">${e.summary}</div>
+	                    </div>
+	                    <div class="text-[10px] text-neutral-500 font-mono shrink-0">#${e.evidence_frame}</div>
+	                  </div>
+	                `
+	              )
+	              .join('')}
+	          </div>`;
+
+	    const evidenceFrames = [
+	      selected.evidence.first_frame,
+	      ...selected.evidence.sample_frames,
+	      selected.evidence.last_frame,
+	    ].filter((n, i, arr) => arr.indexOf(n) === i);
+
+	    if (selectedEvidenceLabel) {
+	      selectedEvidenceLabel.textContent = `Selected: frames #${selected.evidence.first_frame}…#${selected.evidence.last_frame}`;
+	    }
+
+	    analysisText.innerHTML = `
+	      <div class="space-y-2">
+	        <div class="text-sm text-neutral-200">
+	          Session <span class="font-mono text-neutral-300">${selected.id}</span> observed between
+	          <span class="font-mono text-neutral-300">${selected.endpoints.a.ip}${selected.endpoints.a.port ? `:${selected.endpoints.a.port}` : ''}</span>
+	          and
+	          <span class="font-mono text-neutral-300">${selected.endpoints.b.ip}${selected.endpoints.b.port ? `:${selected.endpoints.b.port}` : ''}</span>.
+	        </div>
+	        <div class="text-xs text-neutral-400">
+	          ${selected.transport.toUpperCase()} • ${selected.packet_count} packets • ${fmtBytes(selected.byte_count)} • ${fmtTs(selected.first_ts)} → ${fmtTs(selected.last_ts)}
+	        </div>
+	        <div class="text-xs text-neutral-400">
+	          Evidence frames: first <span class="font-mono">#${selected.evidence.first_frame}</span>, last <span class="font-mono">#${selected.evidence.last_frame}</span>.
+	        </div>
+	      </div>
+	    `;
+	    void updateExplanationFromService(selected.id);
+
+	    evidenceList.innerHTML =
+	      evidenceFrames.length === 0
+	        ? '<div class="text-neutral-600">No evidence frames.</div>'
+	        : `<div class="grid grid-cols-[120px_1fr] gap-x-4 gap-y-1">
+	            ${evidenceFrames
+	              .slice(0, 200)
+	              .map(
+	                (n) =>
+	                  `<div class="text-neutral-500 font-mono">#${n}</div><div class="text-neutral-600">Evidence reference</div>`
+	              )
+	              .join('')}
+	          </div>`;
+	  }
+
+	  sessionsList?.addEventListener('click', (ev) => {
+	    const el = (ev.target as HTMLElement | null)?.closest?.('[data-session-id]') as
+	      | HTMLElement
+	      | null;
+	    const id = el?.getAttribute?.('data-session-id');
+	    if (!id) return;
+	    selectedSessionId = id;
+	    render();
+	  });
+
+	  openBtn?.addEventListener('click', async () => {
+	    if (!window.electronAPI?.openPcapAndAnalyze) return;
+	    openBtn.disabled = true;
+	    openBtn.textContent = 'Analyzing…';
+	    try {
+	      const result = await window.electronAPI.openPcapAndAnalyze();
+	      if (result.canceled) return;
+	      analysis = result.analysis as AnalysisArtifact;
+	      selectedSessionId = null;
+	      render();
+	    } catch (e) {
+	      console.error(e);
+	      alert((e as Error).message ?? String(e));
+	    } finally {
+	      openBtn.disabled = false;
+	      openBtn.textContent = 'Open PCAP';
+	    }
+	  });
+
+	  render();
+	}
 
 // Wait for DOM to be ready
 if (document.readyState === 'loading') {

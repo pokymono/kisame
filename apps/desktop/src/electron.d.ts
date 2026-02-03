@@ -7,6 +7,10 @@ export interface ElectronAPI {
     chrome: string;
     electron: string;
   };
+  openPcapAndAnalyze: () => Promise<
+    | { canceled: true }
+    | { canceled: false; pcapPath: string; analysis: unknown }
+  >;
 }
 
 declare global {
