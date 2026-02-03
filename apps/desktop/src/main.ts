@@ -20,9 +20,25 @@ async function initApp() {
   let timelineScope: TimelineScope = 'session';
   let timelineSearchQuery = '';
   let timelineKindFilter = 'all';
-  type AnalyzeScreen = 'overview' | 'sessions' | 'timeline' | 'evidence' | 'insights';
+  type AnalyzeScreen = 'overview' | 'sessions' | 'timeline' | 'evidence' | 'insights' | 'workflows';
   let analyzeScreen: AnalyzeScreen = 'overview';
   const analysisCache = new Map<string, AnalysisArtifact>();
+
+  type WorkflowContextMode = 'capture' | 'session';
+  type Workflow = {
+    id: string;
+    name: string;
+    prompts: string[];
+    contextMode: WorkflowContextMode;
+    autoRun?: boolean;
+    createdAt: string;
+    updatedAt: string;
+  };
+
+  const WORKFLOWS_STORAGE_KEY = 'kisame.workflows.v1';
+  let workflows: Workflow[] = [];
+  let selectedWorkflowId: string | null = null;
+  let isWorkflowRunning = false;
 
   type AppTab = 'capture' | 'analyze' | 'export';
   let activeTab: AppTab = 'analyze';
@@ -84,7 +100,12 @@ async function initApp() {
       return;
     }
 
-    ui.analyzeScreenHost.replaceChildren(ui.insightsPanel, ui.welcomePanel);
+    if (screen === 'insights') {
+      ui.analyzeScreenHost.replaceChildren(ui.insightsPanel, ui.welcomePanel);
+      return;
+    }
+
+    ui.analyzeScreenHost.replaceChildren(ui.workflowsPanel, ui.welcomePanel);
   }
 
   function setAnalyzeScreen(screen: AnalyzeScreen) {
@@ -94,6 +115,7 @@ async function initApp() {
     setAnalyzeScreenButtonState(ui.analyzeScreenTimelineButton, screen === 'timeline');
     setAnalyzeScreenButtonState(ui.analyzeScreenEvidenceButton, screen === 'evidence');
     setAnalyzeScreenButtonState(ui.analyzeScreenInsightsButton, screen === 'insights');
+    setAnalyzeScreenButtonState(ui.analyzeScreenWorkflowsButton, screen === 'workflows');
     ui.analyzeScreenLabel.textContent = screen.toUpperCase();
     mountAnalyzeScreen(screen);
     updateTimelineUI();
@@ -276,6 +298,19 @@ async function initApp() {
 
   void refreshExplorerCaptures();
 
+  workflows = loadWorkflows();
+  if (!workflows.length) {
+    workflows = defaultWorkflows();
+  }
+  const firstAuto = workflows.find((w) => w.autoRun);
+  if (firstAuto) {
+    for (const w of workflows) {
+      if (w.id !== firstAuto.id) w.autoRun = false;
+    }
+  }
+  saveWorkflows(workflows);
+  setSelectedWorkflow(firstAuto?.id ?? workflows[0]?.id ?? null);
+
   if (window.electronAPI?.onUploadProgress) {
     window.electronAPI.onUploadProgress((event) => {
       renderUploadIndicator(event);
@@ -308,6 +343,225 @@ async function initApp() {
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${bytes} B`;
   };
+
+  function loadWorkflows(): Workflow[] {
+    try {
+      const raw = window.localStorage.getItem(WORKFLOWS_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as { workflows?: Workflow[] } | Workflow[];
+      const list = Array.isArray(parsed) ? parsed : parsed.workflows ?? [];
+      return list
+        .filter((w): w is Workflow => Boolean(w && typeof (w as any).id === 'string'))
+        .map((w) => ({
+          id: String(w.id),
+          name: typeof w.name === 'string' && w.name.trim() ? w.name.trim() : 'Untitled Workflow',
+          prompts: Array.isArray(w.prompts) ? w.prompts.filter((p) => typeof p === 'string' && p.trim()) : [],
+          contextMode: w.contextMode === 'session' ? 'session' : 'capture',
+          autoRun: Boolean(w.autoRun),
+          createdAt: typeof w.createdAt === 'string' ? w.createdAt : new Date().toISOString(),
+          updatedAt: typeof w.updatedAt === 'string' ? w.updatedAt : new Date().toISOString(),
+        }));
+    } catch {
+      return [];
+    }
+  }
+
+  function saveWorkflows(list: Workflow[]) {
+    workflows = list;
+    try {
+      window.localStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify({ workflows: list }));
+    } catch {
+      // Ignore persistence errors.
+    }
+  }
+
+  function defaultWorkflows(): Workflow[] {
+    const now = new Date().toISOString();
+    return [
+      {
+        id: crypto.randomUUID(),
+        name: 'Forensics Triage (Top IPs/Ports/Protocols)',
+        contextMode: 'capture',
+        autoRun: true,
+        prompts: [
+          'Show the most used IP addresses (top talkers) and explain why they stand out. Include evidence frames where possible.',
+          'Show the most used ports and the protocol distribution. Call out anything unusual for typical enterprise traffic.',
+          'List suspicious or flagged sessions and summarize what each might indicate.',
+          'Give a high-level timeline summary of key events (DNS/TLS/HTTP) and point to evidence frames.',
+        ],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+  }
+
+  function normalizePromptsFromText(text: string): string[] {
+    return text
+      .split('\n')
+      .map((line) => line.replace(/^\s*[-*]\s+/, '').trim())
+      .filter(Boolean);
+  }
+
+  function renderWorkflowsUI() {
+    if (!workflows.length) {
+      ui.workflowList.replaceChildren(
+        el('div', {
+          className: 'flex flex-col items-center justify-center py-8 text-center',
+          children: [
+            el('div', { className: 'data-label mb-1', text: 'NO WORKFLOWS' }),
+            el('div', {
+              className: 'text-[10px] text-white/30',
+              text: 'Create a workflow to automate your starting prompts.',
+            }),
+          ],
+        })
+      );
+      return;
+    }
+
+    const rows = workflows.map((wf) => {
+      const row = el('button', {
+        className: 'w-full rounded px-3 py-3 text-left transition-all data-card',
+        attrs: { type: 'button', 'data-workflow-id': wf.id },
+        children: [
+          el('div', {
+            className: 'flex items-center justify-between gap-2',
+            children: [
+              el('div', { className: 'text-[11px] font-[var(--font-mono)] text-white/80 truncate', text: wf.name }),
+              el('div', { className: 'text-[9px] font-[var(--font-mono)] text-white/35', text: `${wf.prompts.length} steps` }),
+            ],
+          }),
+          el('div', {
+            className: 'mt-1 text-[9px] font-[var(--font-mono)] text-white/30 uppercase tracking-wider',
+            text: wf.contextMode === 'session' ? 'SESSION CONTEXT' : 'CAPTURE CONTEXT',
+          }),
+          wf.autoRun
+            ? el('div', {
+                className: 'mt-2 text-[9px] font-[var(--font-mono)] text-[var(--accent-teal)]/70 uppercase tracking-wider',
+                text: 'AUTO-RUN',
+              })
+            : el('div', { className: 'mt-2 text-[9px] font-[var(--font-mono)] text-white/10', text: ' ' }),
+        ],
+      }) as HTMLButtonElement;
+
+      row.classList.toggle('selected', wf.id === selectedWorkflowId);
+      return row;
+    });
+
+    ui.workflowList.replaceChildren(...rows);
+  }
+
+  function setSelectedWorkflow(id: string | null) {
+    selectedWorkflowId = id;
+    renderWorkflowsUI();
+
+    const wf = workflows.find((w) => w.id === id) ?? null;
+    ui.workflowNameInput.value = wf?.name ?? '';
+    ui.workflowScopeSelect.value = wf?.contextMode ?? 'capture';
+    ui.workflowPromptsInput.value = (wf?.prompts ?? []).join('\n');
+    ui.workflowAutoRunCheckbox.checked = Boolean(wf?.autoRun);
+  }
+
+  function readWorkflowFromEditor(): {
+    name: string;
+    prompts: string[];
+    contextMode: WorkflowContextMode;
+    autoRun: boolean;
+  } {
+    const name = ui.workflowNameInput.value.trim() || 'Untitled Workflow';
+    const contextMode = ui.workflowScopeSelect.value === 'session' ? 'session' : 'capture';
+    const prompts = normalizePromptsFromText(ui.workflowPromptsInput.value);
+    const autoRun = ui.workflowAutoRunCheckbox.checked;
+    return { name, prompts, contextMode, autoRun };
+  }
+
+  function upsertWorkflowFromEditor(existingId?: string | null) {
+    const now = new Date().toISOString();
+    const { name, prompts, contextMode, autoRun } = readWorkflowFromEditor();
+
+    const id = existingId ?? crypto.randomUUID();
+    const prev = workflows.find((w) => w.id === id);
+    const next: Workflow = {
+      id,
+      name,
+      prompts,
+      contextMode,
+      autoRun,
+      createdAt: prev?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    const merged = workflows.map((w) => (w.id === id ? next : { ...w, autoRun: autoRun ? false : w.autoRun }));
+    const exists = merged.some((w) => w.id === id);
+    const finalList = exists ? merged : [next, ...merged];
+
+    if (autoRun) {
+      for (const w of finalList) {
+        if (w.id !== id) w.autoRun = false;
+      }
+    }
+
+    saveWorkflows(finalList);
+    setSelectedWorkflow(id);
+  }
+
+  function deleteSelectedWorkflow() {
+    if (!selectedWorkflowId) return;
+    const wf = workflows.find((w) => w.id === selectedWorkflowId);
+    if (!wf) return;
+    const ok = confirm(`Delete workflow "${wf.name}"?`);
+    if (!ok) return;
+    const next = workflows.filter((w) => w.id !== selectedWorkflowId);
+    saveWorkflows(next);
+    setSelectedWorkflow(next[0]?.id ?? null);
+  }
+
+  function setWorkflowControlsDisabled(disabled: boolean) {
+    ui.workflowNewButton.disabled = disabled;
+    ui.workflowSaveButton.disabled = disabled;
+    ui.workflowRunButton.disabled = disabled;
+    ui.workflowDeleteButton.disabled = disabled;
+    ui.workflowNameInput.disabled = disabled;
+    ui.workflowScopeSelect.disabled = disabled;
+    ui.workflowPromptsInput.disabled = disabled;
+    ui.workflowAutoRunCheckbox.disabled = disabled;
+    ui.workflowRunButton.classList.toggle('opacity-60', disabled);
+  }
+
+  function getAutoRunWorkflow(): Workflow | null {
+    return workflows.find((w) => w.autoRun && w.prompts.length > 0) ?? null;
+  }
+
+  async function runWorkflow(workflow: Workflow): Promise<void> {
+    if (isWorkflowRunning) return;
+    if (!analysis) {
+      alert('Load a capture first.');
+      return;
+    }
+    if (!workflow.prompts.length) return;
+
+    isWorkflowRunning = true;
+    setWorkflowControlsDisabled(true);
+    ui.workflowRunButton.textContent = 'RUNNING…';
+
+    try {
+      for (let i = 0; i < workflow.prompts.length; i++) {
+        const prompt = workflow.prompts[i];
+        const display = `[Workflow: ${workflow.name} ${i + 1}/${workflow.prompts.length}] ${prompt}`;
+        await sendChatQueryText(prompt, { displayText: display, contextMode: workflow.contextMode });
+      }
+    } finally {
+      isWorkflowRunning = false;
+      setWorkflowControlsDisabled(false);
+      ui.workflowRunButton.textContent = 'RUN';
+    }
+  }
+
+  async function maybeAutoRunWorkflow(): Promise<void> {
+    const wf = getAutoRunWorkflow();
+    if (!wf) return;
+    await runWorkflow(wf);
+  }
 
   function renderUploadIndicator(event: {
     stage: 'idle' | 'upload' | 'analyze' | 'done' | 'error';
@@ -503,6 +757,7 @@ async function initApp() {
     setAnalyzeScreen('overview');
     render();
     setActiveTab('analyze');
+    void maybeAutoRunWorkflow();
   }
 
   function setWelcomeVisible(visible: boolean) {
@@ -643,9 +898,11 @@ async function initApp() {
       analysisCache.set(captureSessionId, analysis);
       selectedSessionId = null;
       stoppedOk = true;
+      setAnalyzeScreen('overview');
       render();
       setActiveTab('analyze');
       void refreshExplorerCaptures();
+      void maybeAutoRunWorkflow();
     } catch (err) {
       ui.captureBadge.textContent = liveCaptureInterface
         ? `Live: ${liveCaptureInterface}`
@@ -1233,8 +1490,55 @@ async function initApp() {
   ui.analyzeScreenTimelineButton.addEventListener('click', () => setAnalyzeScreen('timeline'));
   ui.analyzeScreenEvidenceButton.addEventListener('click', () => setAnalyzeScreen('evidence'));
   ui.analyzeScreenInsightsButton.addEventListener('click', () => setAnalyzeScreen('insights'));
+  ui.analyzeScreenWorkflowsButton.addEventListener('click', () => setAnalyzeScreen('workflows'));
 
   setAnalyzeScreen('overview');
+
+  ui.workflowList.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const row = target?.closest('[data-workflow-id]') as HTMLElement | null;
+    const id = row?.getAttribute('data-workflow-id');
+    if (!id) return;
+    setSelectedWorkflow(id);
+  });
+
+  ui.workflowNewButton.addEventListener('click', () => {
+    selectedWorkflowId = null;
+    renderWorkflowsUI();
+    ui.workflowNameInput.value = '';
+    ui.workflowScopeSelect.value = 'capture';
+    ui.workflowPromptsInput.value = '';
+    ui.workflowAutoRunCheckbox.checked = false;
+  });
+
+  ui.workflowSaveButton.addEventListener('click', () => {
+    upsertWorkflowFromEditor(selectedWorkflowId);
+  });
+
+  ui.workflowDeleteButton.addEventListener('click', () => {
+    deleteSelectedWorkflow();
+  });
+
+  ui.workflowRunButton.addEventListener('click', async () => {
+    const wf =
+      selectedWorkflowId && workflows.find((w) => w.id === selectedWorkflowId)
+        ? workflows.find((w) => w.id === selectedWorkflowId)!
+        : (() => {
+            const now = new Date().toISOString();
+            const draft = readWorkflowFromEditor();
+            return {
+              id: crypto.randomUUID(),
+              name: draft.name,
+              prompts: draft.prompts,
+              contextMode: draft.contextMode,
+              autoRun: false,
+              createdAt: now,
+              updatedAt: now,
+            } satisfies Workflow;
+          })();
+
+    await runWorkflow(wf);
+  });
 
   ui.sessionsList.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
@@ -1340,6 +1644,7 @@ async function initApp() {
       render();
       setActiveTab('analyze');
       void refreshExplorerCaptures();
+      void maybeAutoRunWorkflow();
     } catch (err) {
       console.error(err);
       alert((err as Error).message ?? String(err));
@@ -1375,24 +1680,33 @@ async function initApp() {
     ui.chatInput.value = '';
     chatManager.forceScrollToBottom();
 
-    // Create AI message placeholder
-    const aiMessage: ChatMessage = { 
-      role: 'ai', 
-      text: '', 
-      status: 'Initializing…', 
-      isStreaming: true, 
-      toolCalls: [] 
+    const aiMessage: ChatMessage = {
+      role: 'ai',
+      text: '',
+      status: 'Initializing…',
+      isStreaming: true,
+      toolCalls: [],
     };
     chatManager.addMessage(aiMessage);
 
-    const context =
-      selectedSessionId && analysis ? { session_id: selectedSessionId, artifact: analysis } : undefined;
+    const contextMode = options?.contextMode;
+    const context = analysis
+      ? contextMode === 'capture'
+        ? { artifact: analysis }
+        : contextMode === 'session'
+          ? selectedSessionId
+            ? { session_id: selectedSessionId, artifact: analysis }
+            : { artifact: analysis }
+          : selectedSessionId
+            ? { session_id: selectedSessionId, artifact: analysis }
+            : { artifact: analysis }
+      : undefined;
 
     try {
       const response = await fetch(`${explanationBaseUrl}/chat/stream`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query, context }),
+        body: JSON.stringify({ query: trimmed, context }),
       });
 
       if (!response.ok || !response.body) {
@@ -1500,6 +1814,13 @@ async function initApp() {
       aiMessage.text = `Error: ${(err as Error).message ?? String(err)}`;
       chatManager.updateMessage(aiMessage);
     }
+  }
+
+  async function sendChatQuery() {
+    const query = ui.chatInput.value.trim();
+    if (!query) return;
+    ui.chatInput.value = '';
+    await sendChatQueryText(query);
   }
 
   ui.chatSendBtn.addEventListener('click', sendChatQuery);
