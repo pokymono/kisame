@@ -20,6 +20,7 @@ export interface ElectronAPI {
     query: string,
     context?: { session_id?: string; artifact?: unknown }
   ) => Promise<ChatQueryResult>;
+  getBackendUrl: () => Promise<string>;
 }
 
 declare global {
