@@ -234,7 +234,14 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
     const dnsQry = at(row, 'dns.qry.name').trim();
     if (dnsQry) {
       s.observations.dns_queries.push({ name: dnsQry, ts, evidence_frame: frameNo });
-      timeline.push({ ts, session_id: sessionId, kind: 'dns_query', summary: `DNS query: ${dnsQry}`, evidence_frame: frameNo });
+      timeline.push({
+        ts,
+        session_id: sessionId,
+        kind: 'dns_query',
+        summary: `DNS query: ${dnsQry}`,
+        evidence_frame: frameNo,
+        meta: { dns_name: dnsQry },
+      });
     }
 
     const httpMethod = at(row, 'http.request.method').trim();
@@ -249,13 +256,33 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
         ts,
         evidence_frame: frameNo,
       });
-      timeline.push({ ts, session_id: sessionId, kind: 'http_request', summary, evidence_frame: frameNo });
+      timeline.push({
+        ts,
+        session_id: sessionId,
+        kind: 'http_request',
+        summary,
+        evidence_frame: frameNo,
+        meta: {
+          http: {
+            method: httpMethod,
+            host: httpHost || null,
+            uri: httpUri || null,
+          },
+        },
+      });
     }
 
     const sni = at(row, 'tls.handshake.extensions_server_name').trim();
     if (sni) {
       s.observations.tls_sni.push({ server_name: sni, ts, evidence_frame: frameNo });
-      timeline.push({ ts, session_id: sessionId, kind: 'tls_sni', summary: `TLS SNI: ${sni}`, evidence_frame: frameNo });
+      timeline.push({
+        ts,
+        session_id: sessionId,
+        kind: 'tls_sni',
+        summary: `TLS SNI: ${sni}`,
+        evidence_frame: frameNo,
+        meta: { sni },
+      });
     }
   }
 
@@ -266,6 +293,11 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
     if (duration >= 60) flags.push('long_duration');
     if (s.byte_count >= 10 * 1024 * 1024) flags.push('large_bytes');
     if (s.transport === 'other') flags.push('non_tcp_udp');
+
+    const protocolEntries = Object.entries(s.protocol_chains)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([chain, count]) => ({ chain, count }));
 
     return {
       id: s.id,
@@ -278,6 +310,7 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
       byte_count: s.byte_count,
       evidence: s.evidence,
       rule_flags: flags,
+      protocols: protocolEntries.length ? protocolEntries : undefined,
     };
   });
 

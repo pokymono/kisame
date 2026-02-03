@@ -40,6 +40,7 @@ Tool usage policy:
 - Prefer concise tool queries and summarize tool outputs in plain language.
 - When context is available, start with 'pcap_overview' or 'list_sessions' to ground the response before interpreting activity.
 - If the question is about the entire capture (e.g., "was YouTube opened", "any vtop traffic"), use 'pcap_search' across all sessions. Do not limit to the selected session unless explicitly asked.
+- Use 'pcap_domains' for capture-wide domain questions, 'pcap_top_talkers' for top IP/traffic questions, and 'pcap_protocols' for protocol stack questions.
 
 Response format:
 - Start with a short 2–4 sentence summary.
@@ -99,6 +100,81 @@ function getTimelinePreview(artifact: AnalysisArtifact, sessionId: string): stri
 
 function createTools(context?: ChatContext) {
   const artifact = context?.artifact;
+  const domainIndex: Map<string, { dns: number; sni: number; http: number }> | null = artifact
+    ? new Map()
+    : null;
+  let domainIndexBuilt = false;
+  let talkerIndex: Map<string, { bytes: number; packets: number }> | null = artifact ? new Map() : null;
+  let talkerIndexBuilt = false;
+  let protocolIndex: Map<string, number> | null = artifact ? new Map() : null;
+  let protocolIndexBuilt = false;
+
+  const ensureDomainIndex = () => {
+    if (!artifact || !domainIndex || domainIndexBuilt) return;
+    domainIndexBuilt = true;
+
+    const add = (domain: string, type: 'dns' | 'sni' | 'http') => {
+      const key = domain.toLowerCase();
+      const entry = domainIndex.get(key) ?? { dns: 0, sni: 0, http: 0 };
+      entry[type] += 1;
+      domainIndex.set(key, entry);
+    };
+
+    for (const event of artifact.timeline ?? []) {
+      if (event.kind === 'dns_query') {
+        const name = event.meta?.dns_name ?? event.summary.replace(/^DNS query:\s*/i, '').trim();
+        if (name) add(name, 'dns');
+      } else if (event.kind === 'tls_sni') {
+        const sni = event.meta?.sni ?? event.summary.replace(/^TLS SNI:\s*/i, '').trim();
+        if (sni) add(sni, 'sni');
+      } else if (event.kind === 'http_request') {
+        const host =
+          event.meta?.http?.host ??
+          (() => {
+            const cleaned = event.summary.replace(/^HTTP request:\s*/i, '').trim();
+            const parts = cleaned.split(' ');
+            if (parts.length < 2) return '';
+            const hostAndPath = parts.slice(1).join(' ');
+            return hostAndPath.split('/')[0] ?? '';
+          })();
+        if (host) add(host, 'http');
+      }
+    }
+  };
+
+  const ensureTalkerIndex = () => {
+    if (!artifact || !talkerIndex || talkerIndexBuilt) return;
+    talkerIndexBuilt = true;
+
+    for (const session of artifact.sessions ?? []) {
+      const add = (ip: string) => {
+        const entry = talkerIndex.get(ip) ?? { bytes: 0, packets: 0 };
+        entry.bytes += session.byte_count;
+        entry.packets += session.packet_count;
+        talkerIndex.set(ip, entry);
+      };
+      add(session.endpoints.a.ip);
+      add(session.endpoints.b.ip);
+    }
+  };
+
+  const ensureProtocolIndex = () => {
+    if (!artifact || !protocolIndex || protocolIndexBuilt) return;
+    protocolIndexBuilt = true;
+
+    for (const session of artifact.sessions ?? []) {
+      if (session.protocols && session.protocols.length) {
+        for (const proto of session.protocols) {
+          protocolIndex.set(proto.chain, (protocolIndex.get(proto.chain) ?? 0) + proto.count);
+        }
+      } else {
+        protocolIndex.set(
+          session.transport,
+          (protocolIndex.get(session.transport) ?? 0) + session.packet_count
+        );
+      }
+    }
+  };
 
   return {
     pcap_overview: tool({
@@ -223,6 +299,92 @@ function createTools(context?: ChatContext) {
         };
       },
     }),
+    pcap_domains: tool({
+      description:
+        'Aggregate domains observed across DNS, TLS SNI, and HTTP host in the PCAP.',
+      inputSchema: z.object({
+        sources: z.array(z.enum(['dns', 'sni', 'http'])).optional(),
+        contains: z.string().optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      execute: async ({ sources, contains, limit }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        ensureDomainIndex();
+        if (!domainIndex) {
+          return { error: 'Domain index unavailable.' };
+        }
+
+        const filter = contains?.toLowerCase().trim();
+        const allowedSources = sources && sources.length ? new Set(sources) : null;
+
+        const entries = Array.from(domainIndex.entries())
+          .filter(([domain]) => (filter ? domain.includes(filter) : true))
+          .map(([domain, counts]) => {
+            const includeAll = !allowedSources;
+            const total =
+              (includeAll || allowedSources.has('dns') ? counts.dns : 0) +
+              (includeAll || allowedSources.has('sni') ? counts.sni : 0) +
+              (includeAll || allowedSources.has('http') ? counts.http : 0);
+            return {
+              domain,
+              total,
+              dns: counts.dns,
+              sni: counts.sni,
+              http: counts.http,
+            };
+          })
+          .filter((entry) => entry.total > 0)
+          .sort((a, b) => b.total - a.total);
+
+        const max = limit ?? 50;
+        return {
+          total: entries.length,
+          domains: entries.slice(0, max),
+        };
+      },
+    }),
+    pcap_top_talkers: tool({
+      description: 'Return top IPs by bytes/packets across all sessions.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+      }),
+      execute: async ({ limit }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        ensureTalkerIndex();
+        if (!talkerIndex) {
+          return { error: 'Talker index unavailable.' };
+        }
+        const entries = Array.from(talkerIndex.entries())
+          .map(([ip, stats]) => ({ ip, bytes: stats.bytes, packets: stats.packets }))
+          .sort((a, b) => b.bytes - a.bytes);
+        const max = limit ?? 20;
+        return { total: entries.length, talkers: entries.slice(0, max) };
+      },
+    }),
+    pcap_protocols: tool({
+      description: 'Aggregate protocol stacks across the PCAP.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+      }),
+      execute: async ({ limit }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        ensureProtocolIndex();
+        if (!protocolIndex) {
+          return { error: 'Protocol index unavailable.' };
+        }
+        const entries = Array.from(protocolIndex.entries())
+          .map(([protocol, count]) => ({ protocol, count }))
+          .sort((a, b) => b.count - a.count);
+        const max = limit ?? 30;
+        return { total: entries.length, protocols: entries.slice(0, max) };
+      },
+    }),
     pcap_search: tool({
       description:
         'Search across all sessions in the PCAP timeline for one or more terms. Use for capture-wide questions.',
@@ -318,7 +480,15 @@ function createAnalysisAgent(context?: ChatContext) {
       }
       if (!context.session_id) {
         return {
-          activeTools: ['pcap_overview', 'list_sessions', 'search_timeline', 'pcap_search'] as Array<
+          activeTools: [
+            'pcap_overview',
+            'list_sessions',
+            'search_timeline',
+            'pcap_search',
+            'pcap_domains',
+            'pcap_top_talkers',
+            'pcap_protocols',
+          ] as Array<
             keyof typeof tools
           >,
         };
@@ -373,6 +543,24 @@ function summarizeToolResults(results: Array<{ toolCallId: string; toolName: str
           toolCallId,
           toolName,
           summary: `pcap_search: ${output.total ?? 0} matches for ${Array.isArray(output.terms) ? output.terms.join(', ') : 'terms'}`,
+        };
+      case 'pcap_domains':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_domains: ${output.total ?? 0} domains`,
+        };
+      case 'pcap_top_talkers':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_top_talkers: ${output.total ?? 0} IPs`,
+        };
+      case 'pcap_protocols':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_protocols: ${output.total ?? 0} protocols`,
         };
       case 'get_evidence_frames':
         return {

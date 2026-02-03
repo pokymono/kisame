@@ -9,6 +9,9 @@ const toolDisplayNames: Record<string, string> = {
   get_timeline: 'TIMELINE EVENTS',
   search_timeline: 'SEARCH TIMELINE',
   pcap_search: 'PCAP SEARCH',
+  pcap_domains: 'PCAP DOMAINS',
+  pcap_top_talkers: 'TOP TALKERS',
+  pcap_protocols: 'PCAP PROTOCOLS',
   get_evidence_frames: 'EVIDENCE FRAMES',
 };
 
