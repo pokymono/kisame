@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { spawn } from 'child_process';
+import { existsSync, readFileSync } from 'fs';
 import { readFile } from 'fs/promises';
 import * as path from 'path';
 
@@ -43,8 +44,38 @@ function getEngineEntryPath(): string {
   return path.resolve(appPath, '..', '..', 'services', 'forensic-engine', 'main.py');
 }
 
+type KisameConfig = {
+  backendUrl?: string;
+};
+
+function loadBackendUrlFromConfig(filePath: string): string | null {
+  try {
+    if (!existsSync(filePath)) return null;
+    const raw = readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw) as KisameConfig;
+    if (!parsed.backendUrl) return null;
+    return parsed.backendUrl.trim();
+  } catch {
+    return null;
+  }
+}
+
 function getBunServiceUrl(): string {
-  return process.env.KISAME_BUN_URL ?? 'http://localhost:8787';
+  if (process.env.KISAME_BUN_URL) return process.env.KISAME_BUN_URL;
+
+  const configPaths: string[] = [];
+  if (process.env.KISAME_CONFIG_PATH) {
+    configPaths.push(process.env.KISAME_CONFIG_PATH);
+  }
+  configPaths.push(path.join(app.getPath('userData'), 'kisame.config.json'));
+  configPaths.push(path.join(app.getAppPath(), 'kisame.config.json'));
+
+  for (const configPath of configPaths) {
+    const url = loadBackendUrlFromConfig(configPath);
+    if (url) return url;
+  }
+
+  return 'http://localhost:8787';
 }
 
 const createWindow = (): void => {
