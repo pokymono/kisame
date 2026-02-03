@@ -120,12 +120,16 @@ async function initApp() {
     ui.uploadIndicator.classList.add('active');
 
     if (event.stage === 'upload') {
-      const percent =
-        typeof event.percent === 'number'
-          ? Math.max(0, Math.min(100, event.percent))
-          : event.total
-            ? Math.min(100, Math.round(((event.loaded ?? 0) / event.total) * 100))
-            : 0;
+      let percent: number | null = null;
+      if (typeof event.percent === 'number' && Number.isFinite(event.percent)) {
+        percent = event.percent;
+      } else if (event.total && event.total > 0) {
+        percent = Math.round(((event.loaded ?? 0) / event.total) * 100);
+      }
+      if (percent == null || !Number.isFinite(percent)) {
+        percent = 0;
+      }
+      percent = Math.max(0, Math.min(100, percent));
       const blocks = 10;
       const filled = Math.min(blocks, Math.max(0, Math.round((percent / 100) * blocks)));
       const bar = `█`.repeat(filled) + `░`.repeat(blocks - filled);
