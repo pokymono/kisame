@@ -1,6 +1,12 @@
 # Kisame
 
-A monorepo containing desktop and web applications built with modern technologies.
+**Kisame is an AI-assisted network forensics tool that helps analysts reconstruct, explore, and explain network activity from PCAP files using session reconstruction, timelines, and evidence-anchored conversational analysis.**
+
+## System Context & Philosophy
+
+For a complete understanding of Kisame's philosophy, architecture, and behavior, please read [SYSTEM_CONTEXT.md](./SYSTEM_CONTEXT.md).
+
+> "Kisame feels like using Cursor, but instead of explaining code, it helps you reason about network traffic — calmly, transparently, and with evidence."
 
 ## Project Structure
 
