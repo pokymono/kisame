@@ -318,21 +318,19 @@ ipcMain.handle(
   }
 );
 
-// ============ PTY Terminal Support ============
-let ptyProcess: pty.IPty | null = null;
+// ============ PTY Terminal Support (Multi-instance) ============
+const ptyProcesses: Map<string, pty.IPty> = new Map();
 let mainWindow: BrowserWindow | null = null;
+let terminalIdCounter = 0;
 
-ipcMain.handle('terminal:create', (_event, cols: number, rows: number) => {
-  if (ptyProcess) {
-    ptyProcess.kill();
-    ptyProcess = null;
-  }
-
+ipcMain.handle('terminal:create', (_event, cols: number, rows: number): { success: boolean; id: string } => {
+  const id = `term-${++terminalIdCounter}`;
+  
   const shell = process.platform === 'win32' 
     ? 'powershell.exe' 
     : process.env.SHELL || '/bin/bash';
 
-  ptyProcess = pty.spawn(shell, [], {
+  const ptyProcess = pty.spawn(shell, [], {
     name: 'xterm-256color',
     cols: cols || 80,
     rows: rows || 24,
@@ -340,38 +338,43 @@ ipcMain.handle('terminal:create', (_event, cols: number, rows: number) => {
     env: process.env as { [key: string]: string },
   });
 
+  ptyProcesses.set(id, ptyProcess);
+
   ptyProcess.onData((data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal:data', data);
+      mainWindow.webContents.send('terminal:data', { id, data });
     }
   });
 
   ptyProcess.onExit(({ exitCode }) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal:exit', exitCode);
+      mainWindow.webContents.send('terminal:exit', { id, exitCode });
     }
-    ptyProcess = null;
+    ptyProcesses.delete(id);
   });
 
-  return { success: true };
+  return { success: true, id };
 });
 
-ipcMain.handle('terminal:write', (_event, data: string) => {
+ipcMain.handle('terminal:write', (_event, id: string, data: string) => {
+  const ptyProcess = ptyProcesses.get(id);
   if (ptyProcess) {
     ptyProcess.write(data);
   }
 });
 
-ipcMain.handle('terminal:resize', (_event, cols: number, rows: number) => {
+ipcMain.handle('terminal:resize', (_event, id: string, cols: number, rows: number) => {
+  const ptyProcess = ptyProcesses.get(id);
   if (ptyProcess) {
     ptyProcess.resize(cols, rows);
   }
 });
 
-ipcMain.handle('terminal:kill', () => {
+ipcMain.handle('terminal:kill', (_event, id: string) => {
+  const ptyProcess = ptyProcesses.get(id);
   if (ptyProcess) {
     ptyProcess.kill();
-    ptyProcess = null;
+    ptyProcesses.delete(id);
   }
 });
 
@@ -386,10 +389,12 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-  if (ptyProcess) {
+  // Kill all PTY processes
+  for (const ptyProcess of ptyProcesses.values()) {
     ptyProcess.kill();
-    ptyProcess = null;
   }
+  ptyProcesses.clear();
+  
   if (process.platform !== 'darwin') {
     app.quit();
   }
