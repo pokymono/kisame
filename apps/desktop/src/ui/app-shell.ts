@@ -1264,6 +1264,8 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     sessionsPanel,
     timelinePanel,
     terminalPanel,
+    terminalTabsContainer,
+    terminalAddButton,
     terminalContainer,
     sessionKeyPanel,
     insightsPanel,
