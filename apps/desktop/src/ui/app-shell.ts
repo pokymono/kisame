@@ -916,7 +916,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'flex-1 min-w-0 bg-transparent py-3 text-sm font-[var(--font-ui)] text-white/90 placeholder:text-white/25 focus:outline-none',
     attrs: { 
       type: 'text', 
-      placeholder: 'Query the AI analyst...',
+      placeholder: 'Press / to focus…',
       spellcheck: 'false',
     },
   }) as HTMLInputElement;
