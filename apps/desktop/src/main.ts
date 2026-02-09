@@ -3,6 +3,9 @@ import { createAppShell } from './ui/app-shell';
 import { el } from './ui/dom';
 import { ChatManager } from './ui/chat';
 import type { AnalysisArtifact, ChatMessage, ToolCallLog } from './types';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 
 async function initApp() {
   const root = document.getElementById('root');
@@ -20,7 +23,7 @@ async function initApp() {
   let timelineScope: TimelineScope = 'session';
   let timelineSearchQuery = '';
   let timelineKindFilter = 'all';
-  type AnalyzeScreen = 'overview' | 'sessions' | 'timeline' | 'evidence' | 'insights' | 'workflows';
+  type AnalyzeScreen = 'overview' | 'sessions' | 'timeline' | 'terminal' | 'insights' | 'workflows';
   let analyzeScreen: AnalyzeScreen = 'overview';
   const analysisCache = new Map<string, AnalysisArtifact>();
 
@@ -79,7 +82,7 @@ async function initApp() {
   function mountAnalyzeScreen(screen: AnalyzeScreen) {
     if (screen === 'overview') {
       ui.overviewTopLayout.replaceChildren(ui.sessionsPanel, ui.timelinePanel, ui.sessionsSplitHandle);
-      ui.overviewLayout.replaceChildren(ui.overviewTopLayout, ui.evidencePanel, ui.overviewEvidenceHandle);
+      ui.overviewLayout.replaceChildren(ui.overviewTopLayout, ui.terminalPanel, ui.overviewEvidenceHandle);
       ui.analyzeScreenHost.replaceChildren(ui.overviewLayout, ui.welcomePanel);
       return;
     }
@@ -95,8 +98,8 @@ async function initApp() {
       return;
     }
 
-    if (screen === 'evidence') {
-      ui.analyzeScreenHost.replaceChildren(ui.evidencePanel, ui.welcomePanel);
+    if (screen === 'terminal') {
+      ui.analyzeScreenHost.replaceChildren(ui.terminalPanel, ui.welcomePanel);
       return;
     }
 
@@ -113,7 +116,7 @@ async function initApp() {
     setAnalyzeScreenButtonState(ui.analyzeScreenOverviewButton, screen === 'overview');
     setAnalyzeScreenButtonState(ui.analyzeScreenSessionsButton, screen === 'sessions');
     setAnalyzeScreenButtonState(ui.analyzeScreenTimelineButton, screen === 'timeline');
-    setAnalyzeScreenButtonState(ui.analyzeScreenEvidenceButton, screen === 'evidence');
+    setAnalyzeScreenButtonState(ui.analyzeScreenTerminalButton, screen === 'terminal');
     setAnalyzeScreenButtonState(ui.analyzeScreenInsightsButton, screen === 'insights');
     setAnalyzeScreenButtonState(ui.analyzeScreenWorkflowsButton, screen === 'workflows');
     ui.analyzeScreenLabel.textContent = screen.toUpperCase();
@@ -801,14 +804,12 @@ async function initApp() {
   function renderEmptyState() {
     ui.captureBadge.textContent = 'No capture loaded';
     ui.sessionIdLabel.textContent = 'Session: —';
-    ui.selectedEvidenceLabel.textContent = 'Selected: —';
     ui.sessionsList.replaceChildren();
     ui.timelineList.replaceChildren();
     ui.sessionsCount.textContent = '0';
     ui.timelineCount.textContent = '0';
     ui.analysisSummary.replaceChildren();
     setAnalysisDetail('');
-    ui.evidenceList.replaceChildren();
     ui.sessionKeyBody.replaceChildren();
     ui.insightsBody.replaceChildren();
     sessionElements.clear();
@@ -1123,44 +1124,6 @@ async function initApp() {
     renderTimeline(events, { showSessionId: timelineScope === 'all' });
   }
 
-  function renderEvidence(selectedSession: AnalysisArtifact['sessions'][number]) {
-    const evidenceFrames = [
-      selectedSession.evidence.first_frame,
-      ...selectedSession.evidence.sample_frames,
-      selectedSession.evidence.last_frame,
-    ].filter((frame, index, arr) => arr.indexOf(frame) === index);
-
-    ui.selectedEvidenceLabel.textContent = `FRAMES #${selectedSession.evidence.first_frame}–#${selectedSession.evidence.last_frame}`;
-
-    if (!evidenceFrames.length) {
-      ui.evidenceList.replaceChildren(
-        el('div', {
-          className: 'flex flex-col items-center justify-center py-6 text-center',
-          children: [
-            el('div', { className: 'data-label mb-1', text: 'NO FRAMES' }),
-            el('div', { className: 'text-[10px] text-white/30', text: 'No evidence frames available' }),
-          ],
-        })
-      );
-      return;
-    }
-
-    const grid = el('div', { className: 'grid grid-cols-[100px_1fr] gap-x-4 gap-y-2' });
-    for (const frame of evidenceFrames.slice(0, 200)) {
-      grid.append(
-        el('div', { 
-          className: 'font-[var(--font-mono)] text-[11px] text-[var(--accent-amber)] tabular-nums', 
-          text: `#${frame}` 
-        }),
-        el('div', { 
-          className: 'text-[11px] text-white/40 font-[var(--font-mono)]', 
-          text: 'Evidence reference' 
-        })
-      );
-    }
-    ui.evidenceList.replaceChildren(grid);
-  }
-
   function renderAnalysisSummary(selectedSession: AnalysisArtifact['sessions'][number]) {
     const a = `${selectedSession.endpoints.a.ip}${selectedSession.endpoints.a.port ? `:${selectedSession.endpoints.a.port}` : ''}`;
     const b = `${selectedSession.endpoints.b.ip}${selectedSession.endpoints.b.port ? `:${selectedSession.endpoints.b.port}` : ''}`;
@@ -1454,7 +1417,6 @@ async function initApp() {
     const selected = sessions.find((s) => s.id === selectedSessionId) ?? sessions[0];
     selectedSessionId = selected.id;
     updateTimelineUI();
-    renderEvidence(selected);
     renderAnalysisSummary(selected);
     renderSessionKey(selected);
     setAnalysisDetail('Fetching explanation…');
@@ -1488,7 +1450,7 @@ async function initApp() {
   ui.analyzeScreenOverviewButton.addEventListener('click', () => setAnalyzeScreen('overview'));
   ui.analyzeScreenSessionsButton.addEventListener('click', () => setAnalyzeScreen('sessions'));
   ui.analyzeScreenTimelineButton.addEventListener('click', () => setAnalyzeScreen('timeline'));
-  ui.analyzeScreenEvidenceButton.addEventListener('click', () => setAnalyzeScreen('evidence'));
+  ui.analyzeScreenTerminalButton.addEventListener('click', () => setAnalyzeScreen('terminal'));
   ui.analyzeScreenInsightsButton.addEventListener('click', () => setAnalyzeScreen('insights'));
   ui.analyzeScreenWorkflowsButton.addEventListener('click', () => setAnalyzeScreen('workflows'));
 
@@ -1878,6 +1840,111 @@ async function initApp() {
   ui.navCaptureButton.addEventListener('click', () => setActiveTab('capture'));
   ui.navAnalyzeButton.addEventListener('click', () => setActiveTab('analyze'));
   ui.navExportButton.addEventListener('click', () => setActiveTab('export'));
+
+  // ============ System Terminal Setup ============
+  let terminal: Terminal | null = null;
+  let fitAddon: FitAddon | null = null;
+  let terminalInitialized = false;
+
+  async function initTerminal() {
+    if (terminalInitialized || !window.electronAPI?.terminal) return;
+    
+    // Create xterm instance
+    terminal = new Terminal({
+      theme: {
+        background: '#0d1117',
+        foreground: '#c9d1d9',
+        cursor: '#58a6ff',
+        cursorAccent: '#0d1117',
+        selectionBackground: '#264f78',
+        black: '#484f58',
+        red: '#ff7b72',
+        green: '#3fb950',
+        yellow: '#d29922',
+        blue: '#58a6ff',
+        magenta: '#bc8cff',
+        cyan: '#39c5cf',
+        white: '#b1bac4',
+        brightBlack: '#6e7681',
+        brightRed: '#ffa198',
+        brightGreen: '#56d364',
+        brightYellow: '#e3b341',
+        brightBlue: '#79c0ff',
+        brightMagenta: '#d2a8ff',
+        brightCyan: '#56d4dd',
+        brightWhite: '#f0f6fc',
+      },
+      fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New", monospace',
+      fontSize: 13,
+      lineHeight: 1.4,
+      cursorBlink: true,
+      cursorStyle: 'bar',
+    });
+    
+    fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    
+    // Open terminal in container
+    terminal.open(ui.terminalContainer);
+    
+    // Small delay to let DOM settle before fitting
+    setTimeout(() => {
+      fitAddon?.fit();
+    }, 100);
+    
+    // Create PTY process
+    const { cols, rows } = terminal;
+    await window.electronAPI.terminal.create(cols, rows);
+    
+    // Handle data from PTY
+    window.electronAPI.terminal.onData((data) => {
+      terminal?.write(data);
+    });
+    
+    // Handle PTY exit
+    window.electronAPI.terminal.onExit((exitCode) => {
+      terminal?.write(`\r\n\x1b[33mProcess exited with code ${exitCode}\x1b[0m\r\n`);
+      // Restart terminal
+      setTimeout(() => {
+        if (terminal) {
+          const { cols, rows } = terminal;
+          window.electronAPI.terminal.create(cols, rows);
+        }
+      }, 1000);
+    });
+    
+    // Send input to PTY
+    terminal.onData((data) => {
+      window.electronAPI.terminal.write(data);
+    });
+    
+    // Handle resize
+    terminal.onResize(({ cols, rows }) => {
+      window.electronAPI.terminal.resize(cols, rows);
+    });
+    
+    // Fit terminal on container resize
+    const resizeObserver = new ResizeObserver(() => {
+      fitAddon?.fit();
+    });
+    resizeObserver.observe(ui.terminalContainer);
+    
+    terminalInitialized = true;
+  }
+
+  // Initialize terminal when app loads (it's always visible now)
+  void initTerminal();
+
+  // Nav terminal button just focuses the terminal
+  ui.navTerminalButton.addEventListener('click', () => {
+    terminal?.focus();
+    // Highlight button briefly
+    const terminalIcon = ui.navTerminalButton.querySelector('svg');
+    ui.navTerminalButton.classList.add('bg-[var(--accent-teal)]/10', 'border-[var(--accent-teal)]/40');
+    ui.navTerminalButton.classList.remove('border-transparent');
+    terminalIcon?.classList.remove('text-white/40');
+    terminalIcon?.classList.add('text-[var(--accent-teal)]');
+  });
 
   setActiveTab(activeTab);
   render();

@@ -5,6 +5,7 @@ import { stat } from 'fs/promises';
 import { Readable } from 'stream';
 import { TransformStream } from 'stream/web';
 import * as path from 'path';
+import * as pty from 'node-pty';
 
 type OpenPcapAndAnalyzeResult =
   | { canceled: true }
@@ -125,7 +126,7 @@ async function ensureBackendTshark(bunUrl: string): Promise<void> {
   }
 }
 
-const createWindow = (): void => {
+const createWindow = (): BrowserWindow => {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -144,6 +145,8 @@ const createWindow = (): void => {
     // In production, load the built files
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+  
+  return win;
 };
 
 ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyzeResult> => {
@@ -315,17 +318,78 @@ ipcMain.handle(
   }
 );
 
+// ============ PTY Terminal Support ============
+let ptyProcess: pty.IPty | null = null;
+let mainWindow: BrowserWindow | null = null;
+
+ipcMain.handle('terminal:create', (_event, cols: number, rows: number) => {
+  if (ptyProcess) {
+    ptyProcess.kill();
+    ptyProcess = null;
+  }
+
+  const shell = process.platform === 'win32' 
+    ? 'powershell.exe' 
+    : process.env.SHELL || '/bin/bash';
+
+  ptyProcess = pty.spawn(shell, [], {
+    name: 'xterm-256color',
+    cols: cols || 80,
+    rows: rows || 24,
+    cwd: process.env.HOME || process.cwd(),
+    env: process.env as { [key: string]: string },
+  });
+
+  ptyProcess.onData((data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal:data', data);
+    }
+  });
+
+  ptyProcess.onExit(({ exitCode }) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal:exit', exitCode);
+    }
+    ptyProcess = null;
+  });
+
+  return { success: true };
+});
+
+ipcMain.handle('terminal:write', (_event, data: string) => {
+  if (ptyProcess) {
+    ptyProcess.write(data);
+  }
+});
+
+ipcMain.handle('terminal:resize', (_event, cols: number, rows: number) => {
+  if (ptyProcess) {
+    ptyProcess.resize(cols, rows);
+  }
+});
+
+ipcMain.handle('terminal:kill', () => {
+  if (ptyProcess) {
+    ptyProcess.kill();
+    ptyProcess = null;
+  }
+});
+
 app.whenReady().then(() => {
-  createWindow();
+  mainWindow = createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      mainWindow = createWindow();
     }
   });
 });
 
 app.on('window-all-closed', () => {
+  if (ptyProcess) {
+    ptyProcess.kill();
+    ptyProcess = null;
+  }
   if (process.platform !== 'darwin') {
     app.quit();
   }

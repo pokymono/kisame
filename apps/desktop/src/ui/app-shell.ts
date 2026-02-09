@@ -9,13 +9,14 @@ export type AppShellRefs = {
   analyzeScreenOverviewButton: HTMLButtonElement;
   analyzeScreenSessionsButton: HTMLButtonElement;
   analyzeScreenTimelineButton: HTMLButtonElement;
-  analyzeScreenEvidenceButton: HTMLButtonElement;
+  analyzeScreenTerminalButton: HTMLButtonElement;
   analyzeScreenInsightsButton: HTMLButtonElement;
   analyzeScreenWorkflowsButton: HTMLButtonElement;
   analyzeScreenLabel: HTMLElement;
   navCaptureButton: HTMLButtonElement;
   navAnalyzeButton: HTMLButtonElement;
   navExportButton: HTMLButtonElement;
+  navTerminalButton: HTMLButtonElement;
   openPcapButton: HTMLButtonElement;
   liveCaptureButton: HTMLButtonElement;
   liveCaptureStatus: HTMLElement;
@@ -35,7 +36,6 @@ export type AppShellRefs = {
   insightsBody: HTMLElement;
   analysisSummary: HTMLElement;
   analysisDetail: HTMLElement;
-  evidenceList: HTMLElement;
   explorerList: HTMLElement;
   explorerEmptyState: HTMLElement;
   explorerAddButton: HTMLButtonElement;
@@ -51,7 +51,6 @@ export type AppShellRefs = {
   chatInput: HTMLInputElement;
   chatSendBtn: HTMLButtonElement;
   sessionIdLabel: HTMLElement;
-  selectedEvidenceLabel: HTMLElement;
   welcomePanel: HTMLElement;
   overviewLayout: HTMLElement;
   overviewTopLayout: HTMLElement;
@@ -60,7 +59,8 @@ export type AppShellRefs = {
   overviewEvidenceHandle: HTMLElement;
   sessionsPanel: HTMLElement;
   timelinePanel: HTMLElement;
-  evidencePanel: HTMLElement;
+  terminalPanel: HTMLElement;
+  terminalContainer: HTMLElement;
   sessionKeyPanel: HTMLElement;
   insightsPanel: HTMLElement;
   workflowsPanel: HTMLElement;
@@ -253,21 +253,32 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   const navRailTop = el('div', { className: 'flex flex-col items-center gap-3' });
   
-  const navButtons = [
-    { icon: iconRadar, active: true, label: 'Analysis' },
-    { icon: iconTerminal, active: false, label: 'Terminal' },
-    { icon: iconWave, active: false, label: 'Waveform' },
-  ];
+  // Analysis button (active by default)
+  const navAnalysisRailBtn = el('button', {
+    className: 'group relative size-9 rounded flex items-center justify-center transition-all bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/40',
+  }) as HTMLButtonElement;
+  const analysisIcon = iconRadar();
+  analysisIcon.classList.add('size-4', 'text-[var(--accent-cyan)]', 'group-hover:text-white/70', 'transition-colors');
+  navAnalysisRailBtn.append(analysisIcon);
+  
+  // Terminal button
+  const navTerminalButton = el('button', {
+    className: 'group relative size-9 rounded flex items-center justify-center transition-all hover:bg-white/5 border border-transparent',
+    attrs: { title: 'Terminal' },
+  }) as HTMLButtonElement;
+  const terminalIcon = iconTerminal();
+  terminalIcon.classList.add('size-4', 'text-white/40', 'group-hover:text-white/70', 'transition-colors');
+  navTerminalButton.append(terminalIcon);
+  
+  // Waveform button
+  const navWaveformBtn = el('button', {
+    className: 'group relative size-9 rounded flex items-center justify-center transition-all hover:bg-white/5 border border-transparent',
+  }) as HTMLButtonElement;
+  const waveIcon = iconWave();
+  waveIcon.classList.add('size-4', 'text-white/40', 'group-hover:text-white/70', 'transition-colors');
+  navWaveformBtn.append(waveIcon);
 
-  navButtons.forEach(({ icon, active }) => {
-    const btn = el('button', {
-      className: `group relative size-9 rounded flex items-center justify-center transition-all ${active ? 'bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/40' : 'hover:bg-white/5 border border-transparent'}`,
-    });
-    const iconEl = icon();
-    iconEl.classList.add('size-4', active ? 'text-[var(--accent-cyan)]' : 'text-white/40', 'group-hover:text-white/70', 'transition-colors');
-    btn.append(iconEl);
-    navRailTop.append(btn);
-  });
+  navRailTop.append(navAnalysisRailBtn, navTerminalButton, navWaveformBtn);
 
   const navRailBottom = el('div', { className: 'flex flex-col items-center gap-3' });
   
@@ -408,10 +419,10 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     text: 'TIMELINE',
     attrs: { type: 'button', 'data-analyze-screen': 'timeline' },
   }) as HTMLButtonElement;
-  const analyzeScreenEvidenceButton = el('button', {
+  const analyzeScreenTerminalButton = el('button', {
     className: screenBtnInactive,
-    text: 'EVIDENCE',
-    attrs: { type: 'button', 'data-analyze-screen': 'evidence' },
+    text: 'TERMINAL',
+    attrs: { type: 'button', 'data-analyze-screen': 'terminal' },
   }) as HTMLButtonElement;
   const analyzeScreenInsightsButton = el('button', {
     className: screenBtnInactive,
@@ -428,7 +439,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     analyzeScreenOverviewButton,
     analyzeScreenSessionsButton,
     analyzeScreenTimelineButton,
-    analyzeScreenEvidenceButton,
+    analyzeScreenTerminalButton,
     analyzeScreenInsightsButton,
     analyzeScreenWorkflowsButton
   );
@@ -756,31 +767,39 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   welcomeContent.append(hexGrid, welcomeLogo, welcomeTitle, welcomeSubtitle, welcomeBody, accentBar, statsRow);
   welcomePanel.append(welcomeContent);
 
-  const evidencePanel = el('section', {
+  // Terminal Panel (replaces evidence panel)
+  const terminalPanel = el('section', {
     className: 'h-full flex min-w-0 flex-col overflow-hidden border-t border-[var(--app-line)]',
   });
 
-  const evidenceHeader = el('div', {
-    className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  const terminalHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-2 border-b border-[var(--app-line)] bg-[var(--app-surface)]/50',
   });
 
-  const evidenceTitle = el('div', { className: 'flex items-center gap-2' });
-  const shieldIcon = iconShield();
-  shieldIcon.classList.add('size-4', 'text-[var(--accent-amber)]');
-  evidenceTitle.append(shieldIcon, el('span', { className: 'section-label', text: 'EVIDENCE' }));
+  const terminalTitle = el('div', { className: 'flex items-center gap-2' });
+  const terminalHeaderIcon = iconTerminal();
+  terminalHeaderIcon.classList.add('size-4', 'text-[var(--accent-teal)]');
+  terminalTitle.append(terminalHeaderIcon, el('span', { className: 'section-label', text: 'TERMINAL' }));
 
-  const selectedEvidenceLabel = el('div', {
-    className: 'data-label truncate max-w-[150px]',
-    text: 'SELECTED: —',
+  const terminalStatus = el('div', {
+    className: 'flex items-center gap-2',
+  });
+  const terminalDot = el('div', { className: 'size-1.5 rounded-full bg-[var(--accent-teal)] pulse-dot' });
+  const terminalStatusText = el('span', {
+    className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-[var(--accent-teal)] uppercase',
+    text: 'READY',
+  });
+  terminalStatus.append(terminalDot, terminalStatusText);
+
+  terminalHeader.append(terminalTitle, terminalStatus);
+
+  // Container for xterm.js
+  const terminalContainer = el('div', {
+    className: 'flex-1 overflow-hidden bg-[#0d1117]',
+    attrs: { id: 'terminal-container' },
   });
 
-  evidenceHeader.append(evidenceTitle, selectedEvidenceLabel);
-
-  const evidenceList = el('div', {
-    className: 'flex-1 overflow-auto px-4 py-3 text-xs text-white/60',
-  });
-
-  evidencePanel.append(evidenceHeader, evidenceList);
+  terminalPanel.append(terminalHeader, terminalContainer);
 
   const sessionKeyPanel = el('section', {
     className: 'h-full flex min-w-0 flex-col overflow-hidden border-l border-[var(--app-line)]',
@@ -918,7 +937,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   // Default mount = overview.
   overviewTopLayout.append(sessionsPanel, timelinePanel, sessionsSplitHandle);
-  overviewLayout.append(overviewTopLayout, evidencePanel, overviewEvidenceHandle);
+  overviewLayout.append(overviewTopLayout, terminalPanel, overviewEvidenceHandle);
   analyzeScreenHost.append(overviewLayout, welcomePanel);
 
   const chatColumn = el('aside', {
@@ -1195,13 +1214,14 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     analyzeScreenOverviewButton,
     analyzeScreenSessionsButton,
     analyzeScreenTimelineButton,
-    analyzeScreenEvidenceButton,
+    analyzeScreenTerminalButton,
     analyzeScreenInsightsButton,
     analyzeScreenWorkflowsButton,
     analyzeScreenLabel,
     navCaptureButton,
     navAnalyzeButton,
     navExportButton,
+    navTerminalButton,
     openPcapButton,
     liveCaptureButton,
     liveCaptureStatus,
@@ -1221,7 +1241,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     insightsBody,
     analysisSummary,
     analysisDetail,
-    evidenceList,
     explorerList: fileList,
     explorerEmptyState: emptyState,
     explorerAddButton,
@@ -1237,7 +1256,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     chatInput,
     chatSendBtn,
     sessionIdLabel,
-    selectedEvidenceLabel,
     welcomePanel,
     overviewLayout,
     overviewTopLayout,
@@ -1246,7 +1264,8 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     overviewEvidenceHandle,
     sessionsPanel,
     timelinePanel,
-    evidencePanel,
+    terminalPanel,
+    terminalContainer,
     sessionKeyPanel,
     insightsPanel,
     workflowsPanel,

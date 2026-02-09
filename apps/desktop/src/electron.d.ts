@@ -5,6 +5,15 @@ export interface ChatQueryResult {
   context_available: boolean;
 }
 
+export interface TerminalAPI {
+  create: (cols: number, rows: number) => Promise<{ success: boolean }>;
+  write: (data: string) => Promise<void>;
+  resize: (cols: number, rows: number) => Promise<void>;
+  kill: () => Promise<void>;
+  onData: (handler: (data: string) => void) => () => void;
+  onExit: (handler: (exitCode: number) => void) => () => void;
+}
+
 export interface ElectronAPI {
   platform: string;
   versions: {
@@ -30,6 +39,7 @@ export interface ElectronAPI {
       message?: string;
     }) => void
   ) => () => void;
+  terminal: TerminalAPI;
 }
 
 declare global {
