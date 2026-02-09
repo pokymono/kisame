@@ -775,29 +775,26 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   });
 
   const terminalHeader = el('div', {
-    className: 'flex items-center justify-between px-4 py-2 border-b border-[var(--app-line)] bg-[var(--app-surface)]/50',
+    className: 'flex items-center gap-1 px-2 py-1 border-b border-[var(--app-line)] bg-[var(--app-surface)]/50',
   });
 
-  const terminalTitle = el('div', { className: 'flex items-center gap-2' });
-  const terminalHeaderIcon = iconTerminal();
-  terminalHeaderIcon.classList.add('size-4', 'text-[var(--accent-teal)]');
-  terminalTitle.append(terminalHeaderIcon, el('span', { className: 'section-label', text: 'TERMINAL' }));
-
-  const terminalStatus = el('div', {
-    className: 'flex items-center gap-2',
+  // Terminal tabs container
+  const terminalTabsContainer = el('div', {
+    className: 'flex items-center gap-1 flex-1 overflow-x-auto scrollbar-none',
   });
-  const terminalDot = el('div', { className: 'size-1.5 rounded-full bg-[var(--accent-teal)] pulse-dot' });
-  const terminalStatusText = el('span', {
-    className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-[var(--accent-teal)] uppercase',
-    text: 'READY',
-  });
-  terminalStatus.append(terminalDot, terminalStatusText);
 
-  terminalHeader.append(terminalTitle, terminalStatus);
+  // Add terminal button
+  const terminalAddButton = el('button', {
+    className: 'flex items-center justify-center size-6 rounded hover:bg-white/10 text-white/40 hover:text-white/70 transition-colors',
+    attrs: { type: 'button', title: 'New Terminal' },
+  }) as HTMLButtonElement;
+  terminalAddButton.innerHTML = `<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>`;
 
-  // Container for xterm.js
+  terminalHeader.append(terminalTabsContainer, terminalAddButton);
+
+  // Container for xterm.js - removed padding, full height
   const terminalContainer = el('div', {
-    className: 'flex-1 overflow-hidden bg-[#0d1117]',
+    className: 'flex-1 min-h-0 overflow-hidden bg-[#0d1117]',
     attrs: { id: 'terminal-container' },
   });
 
