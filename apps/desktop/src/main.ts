@@ -113,6 +113,7 @@ async function initApp() {
     selectedWorkspaceId = 'default';
   }
   let workspaceAssignments = loadWorkspaceAssignments();
+  let lastWorkspaceId = selectedWorkspaceId;
 
   const renderWorkspaceOptions = () => {
     ui.workspaceSelect.replaceChildren();
@@ -144,22 +145,57 @@ async function initApp() {
   ui.workspaceSelect.addEventListener('change', () => {
     const value = ui.workspaceSelect.value;
     if (value === '__add__') {
-      const name = window.prompt('Workspace name?')?.trim();
-      if (name) {
-        const id = crypto.randomUUID();
-        workspaces = [...workspaces, { id, name }];
-        saveWorkspaces(workspaces);
-        selectedWorkspaceId = id;
-        window.localStorage.setItem(workspaceSelectedKey, selectedWorkspaceId);
-      }
-      renderWorkspaceOptions();
-      renderExplorerCaptures();
+      ui.workspaceSelect.value = lastWorkspaceId;
+      ui.workspaceForm.classList.remove('hidden');
+      ui.workspaceForm.classList.add('flex');
+      ui.workspaceInput.value = '';
+      ui.workspaceInput.focus();
       return;
     }
 
+    lastWorkspaceId = value;
     selectedWorkspaceId = value;
     window.localStorage.setItem(workspaceSelectedKey, selectedWorkspaceId);
+    ui.workspaceForm.classList.add('hidden');
+    ui.workspaceForm.classList.remove('flex');
     renderExplorerCaptures();
+  });
+
+  const submitWorkspace = () => {
+    const name = ui.workspaceInput.value.trim();
+    if (!name) {
+      ui.workspaceInput.focus();
+      return;
+    }
+    const id = crypto.randomUUID();
+    workspaces = [...workspaces, { id, name }];
+    saveWorkspaces(workspaces);
+    selectedWorkspaceId = id;
+    lastWorkspaceId = id;
+    window.localStorage.setItem(workspaceSelectedKey, selectedWorkspaceId);
+    ui.workspaceForm.classList.add('hidden');
+    ui.workspaceForm.classList.remove('flex');
+    renderWorkspaceOptions();
+    renderExplorerCaptures();
+  };
+
+  ui.workspaceAddButton.addEventListener('click', submitWorkspace);
+  ui.workspaceCancelButton.addEventListener('click', () => {
+    ui.workspaceForm.classList.add('hidden');
+    ui.workspaceForm.classList.remove('flex');
+    ui.workspaceInput.value = '';
+    ui.workspaceSelect.value = selectedWorkspaceId;
+  });
+  ui.workspaceInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submitWorkspace();
+    } else if (event.key === 'Escape') {
+      ui.workspaceForm.classList.add('hidden');
+      ui.workspaceForm.classList.remove('flex');
+      ui.workspaceInput.value = '';
+      ui.workspaceSelect.value = selectedWorkspaceId;
+    }
   });
 
   const sessionElements = new Map<string, HTMLElement>();
