@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { spawn } from 'child_process';
-import { existsSync, readFileSync, createReadStream } from 'fs';
+import { existsSync, readFileSync, createReadStream, accessSync, constants as fsConstants } from 'fs';
+import os from 'os';
 import { stat } from 'fs/promises';
 import { Readable } from 'stream';
 import { TransformStream } from 'stream/web';
@@ -323,20 +324,56 @@ const ptyProcesses: Map<string, pty.IPty> = new Map();
 let mainWindow: BrowserWindow | null = null;
 let terminalIdCounter = 0;
 
-ipcMain.handle('terminal:create', (_event, cols: number, rows: number): { success: boolean; id: string } => {
+ipcMain.handle(
+  'terminal:create',
+  (_event, cols: number, rows: number): { success: boolean; id: string; error?: string } => {
   const id = `term-${++terminalIdCounter}`;
-  
-  const shell = process.platform === 'win32' 
-    ? 'powershell.exe' 
-    : process.env.SHELL || '/bin/bash';
+  const shell = (() => {
+    if (process.platform === 'win32') {
+      const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+      const powershell = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+      return existsSync(powershell) ? powershell : 'powershell.exe';
+    }
+    const candidates = [
+      process.env.SHELL,
+      '/bin/zsh',
+      '/bin/bash',
+      '/bin/sh',
+    ].filter(Boolean) as string[];
+    for (const candidate of candidates) {
+      try {
+        accessSync(candidate, fsConstants.X_OK);
+        return candidate;
+      } catch {
+        continue;
+      }
+    }
+    return '/bin/sh';
+  })();
 
-  const ptyProcess = pty.spawn(shell, [], {
-    name: 'xterm-256color',
-    cols: cols || 80,
-    rows: rows || 24,
-    cwd: process.env.HOME || process.cwd(),
-    env: process.env as { [key: string]: string },
-  });
+  const preferredCwd = os.homedir() || process.env.HOME || process.cwd();
+  const cwd = existsSync(preferredCwd) ? preferredCwd : process.cwd();
+
+  let ptyProcess: pty.IPty;
+  try {
+    ptyProcess = pty.spawn(shell, [], {
+      name: 'xterm-256color',
+      cols: cols || 80,
+      rows: rows || 24,
+      cwd,
+      env: {
+        ...process.env,
+        SHELL: process.env.SHELL || shell,
+        TERM: process.env.TERM || 'xterm-256color',
+      } as { [key: string]: string },
+    });
+  } catch (error) {
+    return {
+      success: false,
+      id,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 
   ptyProcesses.set(id, ptyProcess);
 

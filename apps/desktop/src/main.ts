@@ -2248,6 +2248,14 @@ async function initApp() {
     // Create PTY process
     const { cols, rows } = terminal;
     const result = await window.electronAPI.terminal.create(cols, rows);
+    if (!result.success) {
+      const message = result.error ? `Terminal error: ${result.error}` : 'Terminal error: failed to start PTY';
+      terminal.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`);
+      console.error(message);
+      terminal.dispose();
+      container.remove();
+      return null;
+    }
     const id = result.id;
     
     // Create instance object
