@@ -93,8 +93,7 @@ function createSpecialistAgent(
     model: openai(modelName),
     instructions: buildSystemPrompt(context, ROUTE_SCOPES[route]),
     tools: scopedTools,
-    stopWhen: stepCountIs(8),
-    maxOutputTokens: 1024,
+    stopWhen: stepCountIs(15),
     prepareStep: async ({ stepNumber, steps }) => {
       if (!context?.artifact || activeToolNames.length === 0) {
         return { activeTools: [] };
