@@ -45,7 +45,9 @@ function getRoutingSignals(context?: ChatContext): RoutingSignals {
 }
 
 function streamIntent(query: string): boolean {
-  return /\b(tcp stream|data stream|follow.+stream|payload|raw tcp|netcat|nc|shell|command|useradd|adduser|shadow|rogue)\b/i.test(query);
+  return /\b(tcp stream|data stream|follow.+stream|payload|raw tcp|netcat|nc|shell|command|useradd|adduser|shadow|rogue|suspicious|malicious|backdoor)\b/i.test(
+    query
+  );
 }
 
 export async function routeQuery(query: string, context?: ChatContext): Promise<RouteDecision> {
@@ -56,6 +58,10 @@ export async function routeQuery(query: string, context?: ChatContext): Promise<
   const domainToken = tokens.find(isDomainLike) ?? null;
   const global = isGlobalQuestion(query);
   const streamy = streamIntent(query);
+
+  if (!signals.hasArtifact) {
+    return { route: 'summary', reason: 'No capture context available.', confidence: 'high' };
+  }
 
   const schema = z.object({
     route: z.enum(['overview', 'session', 'timeline', 'domain', 'stream', 'summary']),
@@ -88,6 +94,7 @@ Signals:
 Routing guidance:
 - If domainToken is present, prefer domain.
 - If streamIntent is true, prefer stream.
+- If hasTcpSessions is false, avoid stream.
 - If user asks about timeline/events/search/time range, prefer timeline.
 - If user asks about specific session or evidence frames, prefer session.
 - If user asks broad capture questions, prefer overview.
@@ -121,16 +128,17 @@ export function buildRoutedPrompt(query: string, route: RouteName, context?: Cha
   const tokens = normalizeSearchTerms([query]);
   const domainToken = tokens.find(isDomainLike);
   const global = isGlobalQuestion(query);
-  const streamy = streamIntent(query);
 
-  if (route === 'domain' && domainToken) {
-    const preface = global
-      ? `Before answering, use pcap_domain_sessions for domain "${domainToken}" to locate sessions across the capture.`
-      : `Before answering, use pcap_session_domains or pcap_domain_sessions to ground domain "${domainToken}".`;
+  if (route === 'domain') {
+    const preface = domainToken
+      ? global
+        ? `Before answering, use pcap_domain_sessions for domain "${domainToken}" to locate sessions across the capture.`
+        : `Before answering, use pcap_session_domains or pcap_domain_sessions to ground domain "${domainToken}".`
+      : 'Before answering, use pcap_domains to list capture domains, then drill into the relevant domain with pcap_domain_sessions.';
     return `${preface}\n\nUser question: ${query}`;
   }
 
-  if (route === 'stream' || streamy) {
+  if (route === 'stream') {
     const preface =
       'Before answering, use pcap_tcp_streams to list TCP streams and pcap_follow_tcp_stream to reconstruct raw payloads (Follow TCP Stream).';
     return `${preface}\n\nUser question: ${query}`;
