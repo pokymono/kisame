@@ -19,4 +19,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openPcapAndAnalyze: () => ipcRenderer.invoke('kisame:openPcapAndAnalyze'),
   sendChatQuery: (query: string, context?: { session_id?: string; artifact?: unknown }) =>
     ipcRenderer.invoke('kisame:sendChatQuery', query, context) as Promise<ChatQueryResult>,
+  getBackendUrl: () => ipcRenderer.invoke('kisame:getBackendUrl') as Promise<string>,
 });
