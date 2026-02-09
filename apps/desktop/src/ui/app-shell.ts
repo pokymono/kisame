@@ -1,8 +1,17 @@
 import { el } from './dom';
-import { iconArrowRight, iconFolder, iconSessions, iconTimeline, iconShark, iconRadar, iconTerminal, iconWave, iconHex, iconShield } from './icons';
+import { iconArrowRight, iconFolder, iconSessions, iconTimeline, iconRadar, iconTerminal, iconWave, iconHex, iconShield } from './icons';
 
 export type AppShellRefs = {
   root: HTMLElement;
+  mainGrid: HTMLElement;
+  analysisMain: HTMLElement;
+  analyzeScreenHost: HTMLElement;
+  analyzeScreenOverviewButton: HTMLButtonElement;
+  analyzeScreenSessionsButton: HTMLButtonElement;
+  analyzeScreenTimelineButton: HTMLButtonElement;
+  analyzeScreenEvidenceButton: HTMLButtonElement;
+  analyzeScreenInsightsButton: HTMLButtonElement;
+  analyzeScreenLabel: HTMLElement;
   navCaptureButton: HTMLButtonElement;
   navAnalyzeButton: HTMLButtonElement;
   navExportButton: HTMLButtonElement;
@@ -12,11 +21,17 @@ export type AppShellRefs = {
   captureBadge: HTMLElement;
   capturePanel: HTMLElement;
   exportPanel: HTMLElement;
-  centerTop: HTMLElement;
-  evidenceRow: HTMLElement;
   chatColumn: HTMLElement;
   sessionsList: HTMLElement;
   timelineList: HTMLElement;
+  timelineCount: HTMLElement;
+  timelineScopeSessionButton: HTMLButtonElement;
+  timelineScopeAllButton: HTMLButtonElement;
+  timelineKindSelect: HTMLSelectElement;
+  timelineSearchInput: HTMLInputElement;
+  sessionsCount: HTMLElement;
+  sessionKeyBody: HTMLElement;
+  insightsBody: HTMLElement;
   analysisSummary: HTMLElement;
   analysisDetail: HTMLElement;
   evidenceList: HTMLElement;
@@ -37,6 +52,16 @@ export type AppShellRefs = {
   sessionIdLabel: HTMLElement;
   selectedEvidenceLabel: HTMLElement;
   welcomePanel: HTMLElement;
+  overviewLayout: HTMLElement;
+  overviewTopLayout: HTMLElement;
+  sessionsLayout: HTMLElement;
+  sessionsSplitHandle: HTMLElement;
+  overviewEvidenceHandle: HTMLElement;
+  sessionsPanel: HTMLElement;
+  timelinePanel: HTMLElement;
+  evidencePanel: HTMLElement;
+  sessionKeyPanel: HTMLElement;
+  insightsPanel: HTMLElement;
 };
 
 export function createAppShell(root: HTMLElement): AppShellRefs {
@@ -79,8 +104,15 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   const topLeft = el('div', { className: 'flex items-center gap-4 min-w-0 flex-shrink-0' });
   
   const brandGroup = el('div', { className: 'flex items-center gap-2' });
-  const sharkIcon = iconShark();
-  sharkIcon.classList.add('size-5', 'text-[var(--accent-cyan)]');
+  const logo = el('img', {
+    className: 'h-5 w-auto opacity-90',
+    attrs: {
+      src: '/kisame-logo.svg',
+      alt: 'Kisame',
+      draggable: 'false',
+      style: 'filter: invert(1) drop-shadow(0 0 10px rgba(110,181,181,0.10));',
+    },
+  });
   
   const brand = el('div', {
     className: 'font-[var(--font-display)] text-sm font-bold tracking-[0.25em] text-[var(--accent-cyan)] glow-text-cyan uppercase',
@@ -92,7 +124,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     text: 'v1.0',
   });
   
-  brandGroup.append(sharkIcon, brand, versionBadge);
+  brandGroup.append(logo, brand, versionBadge);
 
   const navItems = el('div', { className: 'flex items-center gap-1' });
   const tabButtonBase =
@@ -164,12 +196,48 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   // Main content grid - responsive with proper overflow
   const body = el('div', {
     className: 'relative z-10 grid h-[calc(100%-2.25rem)] overflow-hidden main-grid-responsive',
-    attrs: { style: 'grid-template-columns: 56px 280px minmax(0,1fr) minmax(0,1fr) 380px; grid-template-rows: 1fr 200px;' },
   });
+
+  function clamp(value: number, min: number, max: number) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function readStoredNumber(key: string): number | null {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return null;
+      const num = Number.parseFloat(raw);
+      return Number.isFinite(num) ? num : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeStoredNumber(key: string, value: number) {
+    try {
+      window.localStorage.setItem(key, String(value));
+    } catch {
+      // Ignore persistence errors.
+    }
+  }
+
+  function getCssVarPx(element: HTMLElement, name: string, fallbackPx: number): number {
+    const raw = getComputedStyle(element).getPropertyValue(name).trim();
+    const num = Number.parseFloat(raw);
+    return Number.isFinite(num) ? num : fallbackPx;
+  }
+
+  const persistedExplorerW = readStoredNumber('kisame.ui.explorerWidth');
+  const persistedChatW = readStoredNumber('kisame.ui.chatWidth');
+  const persistedEvidenceH = readStoredNumber('kisame.ui.evidenceHeight');
+
+  if (persistedExplorerW) body.style.setProperty('--explorer-w', `${persistedExplorerW}px`);
+  if (persistedChatW) body.style.setProperty('--chat-w', `${persistedChatW}px`);
+  if (persistedEvidenceH) body.style.setProperty('--evidence-h', `${persistedEvidenceH}px`);
 
   // Left navigation rail
   const navRail = el('div', {
-    className: 'col-start-1 row-span-2 flex flex-col items-center justify-between py-4 border-r border-[var(--app-line)] bg-[var(--app-surface)]/50',
+    className: 'col-start-1 row-start-1 flex flex-col items-center justify-between py-4 border-r border-[var(--app-line)] bg-[var(--app-surface)]/50',
   });
 
   const navRailTop = el('div', { className: 'flex flex-col items-center gap-3' });
@@ -205,7 +273,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   navRail.append(navRailTop, navRailBottom);
 
   const sidebar = el('aside', {
-    className: 'col-start-2 row-span-2 flex flex-col border-r border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/80 to-transparent overflow-hidden min-w-0',
+    className: 'col-start-2 row-start-1 flex flex-col border-r border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/80 to-transparent overflow-hidden min-w-0',
   });
 
   const sidebarHeader = el('div', {
@@ -297,25 +365,85 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   sidebar.append(sidebarHeader, folderRow, workspaceForm, fileList);
 
-  const centerTop = el('div', {
-    className: 'col-start-3 col-span-2 row-start-1 grid grid-cols-2 overflow-hidden relative',
+  const analysisMain = el('section', {
+    className:
+      'col-start-3 col-span-2 row-start-1 flex min-w-0 flex-col overflow-hidden border-r border-[var(--app-line)]/0',
   });
 
-  const sessionsColumn = el('section', {
-    className: 'flex min-w-0 flex-col overflow-hidden border-r border-[var(--app-line)] hide-on-small',
+  const analysisHeader = el('div', {
+    className:
+      'flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+
+  const screenTabs = el('div', { className: 'flex items-center gap-1 flex-wrap min-w-0' });
+  const screenBtnBase =
+    'px-2.5 py-1 text-[9px] font-[var(--font-display)] tracking-[0.22em] uppercase rounded transition-all';
+  const screenBtnActive =
+    `${screenBtnBase} text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/30`;
+  const screenBtnInactive = `${screenBtnBase} text-white/40 hover:text-white/70 border border-transparent`;
+
+  const analyzeScreenOverviewButton = el('button', {
+    className: screenBtnActive,
+    text: 'OVERVIEW',
+    attrs: { type: 'button', 'data-analyze-screen': 'overview' },
+  }) as HTMLButtonElement;
+  const analyzeScreenSessionsButton = el('button', {
+    className: screenBtnInactive,
+    text: 'SESSIONS',
+    attrs: { type: 'button', 'data-analyze-screen': 'sessions' },
+  }) as HTMLButtonElement;
+  const analyzeScreenTimelineButton = el('button', {
+    className: screenBtnInactive,
+    text: 'TIMELINE',
+    attrs: { type: 'button', 'data-analyze-screen': 'timeline' },
+  }) as HTMLButtonElement;
+  const analyzeScreenEvidenceButton = el('button', {
+    className: screenBtnInactive,
+    text: 'EVIDENCE',
+    attrs: { type: 'button', 'data-analyze-screen': 'evidence' },
+  }) as HTMLButtonElement;
+  const analyzeScreenInsightsButton = el('button', {
+    className: screenBtnInactive,
+    text: 'INSIGHTS',
+    attrs: { type: 'button', 'data-analyze-screen': 'insights' },
+  }) as HTMLButtonElement;
+
+  screenTabs.append(
+    analyzeScreenOverviewButton,
+    analyzeScreenSessionsButton,
+    analyzeScreenTimelineButton,
+    analyzeScreenEvidenceButton,
+    analyzeScreenInsightsButton
+  );
+
+  const analyzeScreenLabel = el('div', {
+    className: 'data-label truncate max-w-[220px]',
+    text: 'OVERVIEW',
+  });
+
+  analysisHeader.append(screenTabs, analyzeScreenLabel);
+
+  const analyzeScreenHost = el('div', {
+    className: 'relative flex-1 min-h-0 overflow-hidden',
+  });
+
+  analysisMain.append(analysisHeader, analyzeScreenHost);
+
+  const persistedSessionsW = readStoredNumber('kisame.ui.sessionsWidth');
+  if (persistedSessionsW) analysisMain.style.setProperty('--sessions-w', `${persistedSessionsW}px`);
+
+  const sessionsPanel = el('section', {
+    className: 'h-full flex min-w-0 flex-col overflow-hidden border-r border-[var(--app-line)]',
   });
 
   const sessionsHeader = el('div', {
     className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
   });
-  
+
   const sessionsTitle = el('div', { className: 'flex items-center gap-2' });
   const sessionsIcon = iconSessions();
   sessionsIcon.classList.add('size-4', 'text-[var(--accent-cyan)]');
-  sessionsTitle.append(
-    sessionsIcon,
-    el('span', { className: 'section-label', text: 'SESSIONS' })
-  );
+  sessionsTitle.append(sessionsIcon, el('span', { className: 'section-label', text: 'SESSIONS' }));
 
   const sessionsCount = el('div', {
     className: 'px-2 py-0.5 text-[9px] font-[var(--font-mono)] text-white/30 bg-white/5 rounded',
@@ -328,36 +456,199 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'flex-1 overflow-y-auto px-3 py-3 space-y-2',
   });
 
-  sessionsColumn.append(sessionsHeader, sessionsList);
+  sessionsPanel.append(sessionsHeader, sessionsList);
 
-  const timelineColumn = el('section', {
-    className: 'flex min-w-0 flex-col overflow-hidden',
+  const timelinePanel = el('section', {
+    className: 'h-full flex min-w-0 flex-col overflow-hidden',
   });
 
   const timelineHeader = el('div', {
     className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
   });
-  
+
   const timelineTitle = el('div', { className: 'flex items-center gap-2' });
   const timelineIcon = iconTimeline();
   timelineIcon.classList.add('size-4', 'text-[var(--accent-teal)]');
-  timelineTitle.append(
-    timelineIcon,
-    el('span', { className: 'section-label', text: 'TIMELINE' })
-  );
+  timelineTitle.append(timelineIcon, el('span', { className: 'section-label', text: 'TIMELINE' }));
 
   const sessionIdLabel = el('div', {
     className: 'data-label truncate max-w-[150px]',
     text: 'SESSION: —',
   });
 
-  timelineHeader.append(timelineTitle, sessionIdLabel);
+  const timelineCount = el('div', {
+    className: 'px-2 py-0.5 text-[9px] font-[var(--font-mono)] text-white/30 bg-white/5 rounded',
+    text: '0',
+  });
+
+  const timelineHeaderRight = el('div', { className: 'flex items-center gap-2 min-w-0' });
+  timelineHeaderRight.append(sessionIdLabel, timelineCount);
+  timelineHeader.append(timelineTitle, timelineHeaderRight);
+
+  const timelineControls = el('div', {
+    className: 'flex items-center gap-2 px-4 py-2 border-b border-[var(--app-line)] bg-[var(--app-surface)]/10',
+  });
+
+  const timelineScope = el('div', {
+    className: 'flex items-center rounded overflow-hidden border border-white/10 bg-white/5',
+  });
+  const timelineScopeSessionButton = el('button', {
+    className:
+      'px-2 py-1 text-[9px] font-[var(--font-mono)] tracking-wider text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10',
+    text: 'SESSION',
+    attrs: { type: 'button', 'data-timeline-scope': 'session' },
+  }) as HTMLButtonElement;
+  const timelineScopeAllButton = el('button', {
+    className:
+      'px-2 py-1 text-[9px] font-[var(--font-mono)] tracking-wider text-white/40 hover:text-white/70 transition-colors',
+    text: 'ALL',
+    attrs: { type: 'button', 'data-timeline-scope': 'all' },
+  }) as HTMLButtonElement;
+  timelineScope.append(timelineScopeSessionButton, timelineScopeAllButton);
+
+  const timelineKindSelect = el('select', {
+    className:
+      'bg-white/5 border border-white/10 rounded px-2 py-1 text-[9px] font-[var(--font-mono)] tracking-wider text-white/60 focus:outline-none',
+  }) as HTMLSelectElement;
+  timelineKindSelect.append(new Option('ALL', 'all'));
+
+  const timelineSearchInput = el('input', {
+    className:
+      'flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-[10px] font-[var(--font-mono)] text-white/70 placeholder:text-white/25 focus:outline-none',
+    attrs: { type: 'search', placeholder: 'Search timeline…' },
+  }) as HTMLInputElement;
+
+  timelineControls.append(timelineScope, timelineKindSelect, timelineSearchInput);
 
   const timelineList = el('div', {
     className: 'flex-1 overflow-y-auto px-3 py-3 space-y-2',
   });
 
-  timelineColumn.append(timelineHeader, timelineList);
+  timelinePanel.append(timelineHeader, timelineControls, timelineList);
+
+  function bindVerticalResize(handle: HTMLElement, readPx: () => number, onUpdate: (nextPx: number) => void) {
+    let startX = 0;
+    let startPx = 0;
+
+    const onPointerMove = (event: PointerEvent) => {
+      const delta = event.clientX - startX;
+      onUpdate(startPx + delta);
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      handle.releasePointerCapture(event.pointerId);
+      document.body.style.userSelect = '';
+      handle.removeEventListener('pointermove', onPointerMove);
+      handle.removeEventListener('pointerup', onPointerUp);
+      handle.removeEventListener('pointercancel', onPointerUp);
+    };
+
+    handle.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      startX = event.clientX;
+      startPx = readPx();
+      document.body.style.userSelect = 'none';
+      handle.setPointerCapture(event.pointerId);
+      handle.addEventListener('pointermove', onPointerMove);
+      handle.addEventListener('pointerup', onPointerUp);
+      handle.addEventListener('pointercancel', onPointerUp);
+    });
+  }
+
+  function bindHorizontalResize(handle: HTMLElement, readPx: () => number, onUpdate: (nextPx: number) => void) {
+    let startY = 0;
+    let startPx = 0;
+
+    const onPointerMove = (event: PointerEvent) => {
+      const delta = event.clientY - startY;
+      onUpdate(startPx - delta);
+    };
+
+    const onPointerUp = (event: PointerEvent) => {
+      handle.releasePointerCapture(event.pointerId);
+      document.body.style.userSelect = '';
+      handle.removeEventListener('pointermove', onPointerMove);
+      handle.removeEventListener('pointerup', onPointerUp);
+      handle.removeEventListener('pointercancel', onPointerUp);
+    };
+
+    handle.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      startY = event.clientY;
+      startPx = readPx();
+      document.body.style.userSelect = 'none';
+      handle.setPointerCapture(event.pointerId);
+      handle.addEventListener('pointermove', onPointerMove);
+      handle.addEventListener('pointerup', onPointerUp);
+      handle.addEventListener('pointercancel', onPointerUp);
+    });
+  }
+
+  // Resize handles (overlay)
+  const explorerResizeHandle = el('div', {
+    className: 'resize-handle absolute inset-y-0 w-2 -ml-1 cursor-col-resize z-30',
+    attrs: { style: 'left: calc(var(--nav-w) + var(--explorer-w));' },
+  });
+  explorerResizeHandle.append(
+    el('div', { className: 'absolute inset-y-0 left-1/2 w-px bg-white/10' })
+  );
+  bindVerticalResize(
+    explorerResizeHandle,
+    () => getCssVarPx(body, '--explorer-w', 280),
+    (nextPx) => {
+      const clamped = clamp(nextPx, 180, 520);
+      body.style.setProperty('--explorer-w', `${clamped}px`);
+      writeStoredNumber('kisame.ui.explorerWidth', clamped);
+    }
+  );
+
+  const chatResizeHandle = el('div', {
+    className: 'resize-handle absolute inset-y-0 w-2 -mr-1 cursor-col-resize z-30',
+    attrs: { style: 'right: var(--chat-w);' },
+  });
+  chatResizeHandle.append(
+    el('div', { className: 'absolute inset-y-0 left-1/2 w-px bg-white/10' })
+  );
+  bindVerticalResize(
+    chatResizeHandle,
+    () => -getCssVarPx(body, '--chat-w', 380),
+    (negNextPx) => {
+      const nextPx = -negNextPx;
+      const clamped = clamp(nextPx, 260, 620);
+      body.style.setProperty('--chat-w', `${clamped}px`);
+      writeStoredNumber('kisame.ui.chatWidth', clamped);
+    }
+  );
+
+  const sessionsSplitHandle = el('div', {
+    className: 'resize-handle absolute inset-y-0 w-2 -ml-1 cursor-col-resize z-20',
+    attrs: { style: 'left: var(--sessions-w);' },
+  });
+  sessionsSplitHandle.append(el('div', { className: 'absolute inset-y-0 left-1/2 w-px bg-white/10' }));
+  bindVerticalResize(
+    sessionsSplitHandle,
+    () => getCssVarPx(analysisMain, '--sessions-w', 340),
+    (nextPx) => {
+      const clamped = clamp(nextPx, 220, 720);
+      analysisMain.style.setProperty('--sessions-w', `${clamped}px`);
+      writeStoredNumber('kisame.ui.sessionsWidth', clamped);
+    }
+  );
+
+  const overviewEvidenceHandle = el('div', {
+    className: 'resize-handle absolute h-2 -mb-1 cursor-row-resize z-20',
+    attrs: { style: 'left: 0; right: 0; bottom: var(--evidence-h);' },
+  });
+  overviewEvidenceHandle.append(el('div', { className: 'absolute inset-x-0 top-1/2 h-px bg-white/10' }));
+  bindHorizontalResize(
+    overviewEvidenceHandle,
+    () => getCssVarPx(body, '--evidence-h', 220),
+    (nextPx) => {
+      const clamped = clamp(nextPx, 140, 520);
+      body.style.setProperty('--evidence-h', `${clamped}px`);
+      writeStoredNumber('kisame.ui.evidenceHeight', clamped);
+    }
+  );
 
   // Welcome panel overlay
   const welcomePanel = el('div', {
@@ -383,9 +674,16 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   const welcomeLogo = el('div', {
     className: 'flex items-center justify-center gap-4 mb-8',
   });
-  const bigShark = iconShark();
-  bigShark.classList.add('size-16', 'text-[var(--accent-cyan)]', 'opacity-80');
-  welcomeLogo.append(bigShark);
+  const bigLogo = el('img', {
+    className: 'h-16 w-auto opacity-90',
+    attrs: {
+      src: '/kisame-logo.svg',
+      alt: 'Kisame',
+      draggable: 'false',
+      style: 'filter: invert(1) drop-shadow(0 0 18px rgba(110,181,181,0.10));',
+    },
+  });
+  welcomeLogo.append(bigLogo);
 
   const welcomeTitle = el('div', {
     className: 'font-[var(--font-display)] text-5xl font-black tracking-[0.35em] text-white/90 mb-4 glow-text-cyan',
@@ -441,10 +739,8 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   welcomeContent.append(hexGrid, welcomeLogo, welcomeTitle, welcomeSubtitle, welcomeBody, accentBar, statsRow);
   welcomePanel.append(welcomeContent);
 
-  centerTop.append(sessionsColumn, timelineColumn, welcomePanel);
-
-  const evidenceRow = el('section', {
-    className: 'col-start-3 col-span-2 row-start-2 flex min-w-0 flex-col overflow-hidden border-t border-[var(--app-line)]',
+  const evidencePanel = el('section', {
+    className: 'h-full flex min-w-0 flex-col overflow-hidden border-t border-[var(--app-line)]',
   });
 
   const evidenceHeader = el('div', {
@@ -454,10 +750,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   const evidenceTitle = el('div', { className: 'flex items-center gap-2' });
   const shieldIcon = iconShield();
   shieldIcon.classList.add('size-4', 'text-[var(--accent-amber)]');
-  evidenceTitle.append(
-    shieldIcon,
-    el('span', { className: 'section-label', text: 'EVIDENCE' })
-  );
+  evidenceTitle.append(shieldIcon, el('span', { className: 'section-label', text: 'EVIDENCE' }));
 
   const selectedEvidenceLabel = el('div', {
     className: 'data-label truncate max-w-[150px]',
@@ -470,10 +763,60 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'flex-1 overflow-auto px-4 py-3 text-xs text-white/60',
   });
 
-  evidenceRow.append(evidenceHeader, evidenceList);
+  evidencePanel.append(evidenceHeader, evidenceList);
+
+  const sessionKeyPanel = el('section', {
+    className: 'h-full flex min-w-0 flex-col overflow-hidden border-l border-[var(--app-line)]',
+  });
+  const sessionKeyHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+  sessionKeyHeader.append(
+    el('div', { className: 'section-label', text: 'SESSION KEY' }),
+    el('div', { className: 'data-label', text: 'DETAILS' })
+  );
+  const sessionKeyBody = el('div', {
+    className: 'flex-1 overflow-auto px-4 py-3 text-xs text-white/60',
+  });
+  sessionKeyPanel.append(sessionKeyHeader, sessionKeyBody);
+
+  const insightsPanel = el('section', {
+    className: 'h-full flex min-w-0 flex-col overflow-hidden',
+  });
+  const insightsHeader = el('div', {
+    className: 'flex items-center justify-between px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+  });
+  insightsHeader.append(
+    el('div', { className: 'section-label', text: 'INSIGHTS' }),
+    el('div', { className: 'data-label', text: 'CAPTURE' })
+  );
+  const insightsBody = el('div', {
+    className: 'flex-1 overflow-auto px-4 py-3 text-xs text-white/60',
+  });
+  insightsPanel.append(insightsHeader, insightsBody);
+
+  const overviewTopLayout = el('div', {
+    className: 'relative grid min-h-0 overflow-hidden overview-top-grid',
+    attrs: { style: 'grid-template-columns: var(--sessions-w) minmax(0,1fr);' },
+  });
+
+  const overviewLayout = el('div', {
+    className: 'relative grid h-full min-h-0 overflow-hidden',
+    attrs: { style: 'grid-template-rows: minmax(0,1fr) var(--evidence-h);' },
+  });
+
+  const sessionsLayout = el('div', {
+    className: 'relative grid h-full min-h-0 overflow-hidden sessions-top-grid',
+    attrs: { style: 'grid-template-columns: var(--sessions-w) minmax(0,1fr);' },
+  });
+
+  // Default mount = overview.
+  overviewTopLayout.append(sessionsPanel, timelinePanel, sessionsSplitHandle);
+  overviewLayout.append(overviewTopLayout, evidencePanel, overviewEvidenceHandle);
+  analyzeScreenHost.append(overviewLayout, welcomePanel);
 
   const chatColumn = el('aside', {
-    className: 'col-start-5 row-span-2 flex min-w-0 flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/50 to-transparent',
+    className: 'col-start-5 row-start-1 flex min-w-0 flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/50 to-transparent',
   });
 
   const analysisPanel = el('div', {
@@ -590,7 +933,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   const capturePanel = el('section', {
     className:
-      'col-start-3 col-span-3 row-span-2 hidden flex flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/70 to-transparent',
+      'col-start-3 col-span-3 row-start-1 hidden flex flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/70 to-transparent',
   });
 
   const captureHeader = el('div', {
@@ -703,7 +1046,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   // ============================================================================
   const exportPanel = el('section', {
     className:
-      'col-start-3 col-span-3 row-span-2 hidden flex flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/70 to-transparent',
+      'col-start-3 col-span-3 row-start-1 hidden flex flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/70 to-transparent',
   });
   const exportHeader = el('div', {
     className: 'flex items-center justify-between px-6 py-4 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
@@ -725,12 +1068,30 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   });
   exportPanel.append(exportHeader, exportBody);
 
-  body.append(navRail, sidebar, centerTop, evidenceRow, chatColumn, capturePanel, exportPanel);
+  body.append(
+    navRail,
+    sidebar,
+    analysisMain,
+    chatColumn,
+    capturePanel,
+    exportPanel,
+    explorerResizeHandle,
+    chatResizeHandle
+  );
   app.append(bgEffects, topBar, body);
   root.replaceChildren(app);
 
   return {
     root: app,
+    mainGrid: body,
+    analysisMain,
+    analyzeScreenHost,
+    analyzeScreenOverviewButton,
+    analyzeScreenSessionsButton,
+    analyzeScreenTimelineButton,
+    analyzeScreenEvidenceButton,
+    analyzeScreenInsightsButton,
+    analyzeScreenLabel,
     navCaptureButton,
     navAnalyzeButton,
     navExportButton,
@@ -740,11 +1101,17 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     captureBadge: badgeText,
     capturePanel,
     exportPanel,
-    centerTop,
-    evidenceRow,
     chatColumn,
     sessionsList,
     timelineList,
+    timelineCount,
+    timelineScopeSessionButton,
+    timelineScopeAllButton,
+    timelineKindSelect,
+    timelineSearchInput,
+    sessionsCount,
+    sessionKeyBody,
+    insightsBody,
     analysisSummary,
     analysisDetail,
     evidenceList,
@@ -765,5 +1132,15 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     sessionIdLabel,
     selectedEvidenceLabel,
     welcomePanel,
+    overviewLayout,
+    overviewTopLayout,
+    sessionsLayout,
+    sessionsSplitHandle,
+    overviewEvidenceHandle,
+    sessionsPanel,
+    timelinePanel,
+    evidencePanel,
+    sessionKeyPanel,
+    insightsPanel,
   };
 }
