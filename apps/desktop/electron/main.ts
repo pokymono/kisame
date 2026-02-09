@@ -328,7 +328,7 @@ ipcMain.handle(
   'terminal:create',
   (_event, cols: number, rows: number): { success: boolean; id: string; error?: string } => {
   const id = `term-${++terminalIdCounter}`;
-  const shell = (() => {
+  const baseShell = (() => {
     if (process.platform === 'win32') {
       const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
       const powershell = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
@@ -352,26 +352,61 @@ ipcMain.handle(
   })();
 
   const preferredCwd = os.homedir() || process.env.HOME || process.cwd();
-  const cwd = existsSync(preferredCwd) ? preferredCwd : process.cwd();
+  const cwdCandidates = Array.from(new Set([
+    existsSync(preferredCwd) ? preferredCwd : undefined,
+    process.cwd(),
+    '/',
+  ].filter(Boolean))) as string[];
+  const shellCandidates = Array.from(new Set([
+    baseShell,
+    process.env.SHELL,
+    '/bin/zsh',
+    '/bin/bash',
+    '/bin/sh',
+  ].filter(Boolean))) as string[];
 
-  let ptyProcess: pty.IPty;
-  try {
-    ptyProcess = pty.spawn(shell, [], {
-      name: 'xterm-256color',
-      cols: cols || 80,
-      rows: rows || 24,
-      cwd,
-      env: {
-        ...process.env,
-        SHELL: process.env.SHELL || shell,
-        TERM: process.env.TERM || 'xterm-256color',
-      } as { [key: string]: string },
-    });
-  } catch (error) {
+  const env = {
+    ...process.env,
+    SHELL: process.env.SHELL || baseShell,
+    TERM: process.env.TERM || 'xterm-256color',
+    PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
+  } as { [key: string]: string };
+
+  let ptyProcess: pty.IPty | null = null;
+  let lastError: unknown = null;
+
+  for (const shell of shellCandidates) {
+    try {
+      if (process.platform !== 'win32') {
+        accessSync(shell, fsConstants.X_OK);
+      }
+    } catch {
+      continue;
+    }
+    for (const cwd of cwdCandidates) {
+      try {
+        ptyProcess = pty.spawn(shell, [], {
+          name: 'xterm-256color',
+          cols: cols || 80,
+          rows: rows || 24,
+          cwd,
+          env,
+        });
+        break;
+      } catch (error) {
+        lastError = error;
+        continue;
+      }
+    }
+    if (ptyProcess) break;
+  }
+
+  if (!ptyProcess) {
+    const lastMessage = lastError instanceof Error ? lastError.message : String(lastError ?? 'unknown error');
     return {
       success: false,
       id,
-      error: error instanceof Error ? error.message : String(error),
+      error: `posix_spawnp failed. shells=${shellCandidates.join(', ')} cwd=${cwdCandidates.join(', ')} last=${lastMessage}`,
     };
   }
 
