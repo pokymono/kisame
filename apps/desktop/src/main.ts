@@ -124,6 +124,11 @@ async function initApp() {
     scrollThreshold: 80,
   });
 
+  // Chat history buffer
+  const chatHistory: string[] = [];
+  let chatHistoryIndex = -1;
+  let chatCurrentDraft = '';
+
   type Workspace = { id: string; name: string };
   const workspaceStorageKey = 'kisame.workspaces';
   const workspaceSelectedKey = 'kisame.workspace.selected';
@@ -1357,6 +1362,11 @@ async function initApp() {
     const query = ui.chatInput.value.trim();
     if (!query) return;
 
+    // History push
+    chatHistory.push(query);
+    chatHistoryIndex = -1;
+    chatCurrentDraft = '';
+
     // Add user message
     const userMessage: ChatMessage = { role: 'user', text: query };
     chatManager.addMessage(userMessage);
@@ -1497,6 +1507,41 @@ async function initApp() {
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       void sendChatQuery();
+    } else if (event.key === 'ArrowUp') {
+      if (chatHistoryIndex === -1 && ui.chatInput.value && ui.chatInput.selectionStart !== 0) {
+        return; // Allow normal navigation if typing and not at start
+      }
+      if (chatHistoryIndex === -1 && chatHistory.length > 0) {
+        chatCurrentDraft = ui.chatInput.value;
+        chatHistoryIndex = chatHistory.length - 1;
+        ui.chatInput.value = chatHistory[chatHistoryIndex];
+        event.preventDefault();
+        // Move cursor to end
+        setTimeout(() => {
+          ui.chatInput.selectionStart = ui.chatInput.selectionEnd = ui.chatInput.value.length;
+        }, 0);
+      } else if (chatHistoryIndex > 0) {
+        chatHistoryIndex--;
+        ui.chatInput.value = chatHistory[chatHistoryIndex];
+        event.preventDefault();
+        setTimeout(() => {
+          ui.chatInput.selectionStart = ui.chatInput.selectionEnd = ui.chatInput.value.length;
+        }, 0);
+      }
+    } else if (event.key === 'ArrowDown') {
+      if (chatHistoryIndex !== -1) {
+        if (chatHistoryIndex < chatHistory.length - 1) {
+          chatHistoryIndex++;
+          ui.chatInput.value = chatHistory[chatHistoryIndex];
+        } else {
+          chatHistoryIndex = -1;
+          ui.chatInput.value = chatCurrentDraft;
+        }
+        event.preventDefault();
+        setTimeout(() => {
+            ui.chatInput.selectionStart = ui.chatInput.selectionEnd = ui.chatInput.value.length;
+        }, 0);
+      }
     }
   });
 
