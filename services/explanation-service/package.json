@@ -1,11 +1,15 @@
 {
   "name": "explanation-service",
-  "module": "index.ts",
+  "module": "src/index.ts",
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "bun --watch index.ts",
-    "start": "bun index.ts"
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "ai": "^6.0.68",
+    "@ai-sdk/openai": "^3.0.25"
   },
   "devDependencies": {
     "@types/bun": "latest"

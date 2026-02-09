@@ -145,6 +145,47 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
   }
 });
 
+type ChatQueryResult = {
+  query: string;
+  response: string;
+  timestamp: string;
+  context_available: boolean;
+};
+
+ipcMain.handle(
+  'kisame:sendChatQuery',
+  async (
+    _event,
+    query: string,
+    context?: { session_id?: string; artifact?: unknown }
+  ): Promise<ChatQueryResult> => {
+    const bunUrl = getBunServiceUrl();
+
+    try {
+      const res = await fetch(`${bunUrl}/chat`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query, context }),
+      });
+
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(`Chat request failed (${res.status}). ${msg}`);
+      }
+
+      return (await res.json()) as ChatQueryResult;
+    } catch (e) {
+      // Return error as a response so the UI can display it
+      return {
+        query,
+        response: `Error: ${(e as Error).message ?? String(e)}`,
+        timestamp: new Date().toISOString(),
+        context_available: false,
+      };
+    }
+  }
+);
+
 app.whenReady().then(() => {
   createWindow();
 
