@@ -77,6 +77,8 @@ function createSpecialistAgent(
   planActions?: RouterPlanAction[]
 ): ToolLoopAgent {
   const modelName = process.env.OPENAI_MODEL ?? 'gpt-5.2';
+  const minToolCalls = Number(process.env.KISAME_MIN_TOOL_CALLS ?? '10');
+  const maxSteps = Math.max(15, Number.isFinite(minToolCalls) ? minToolCalls + 5 : 15);
   const requestedPlan = (planActions && planActions.length ? planActions : DEFAULT_ROUTE_PLANS[route]).filter(
     (action): action is RouterPlanAction => Boolean(action)
   );
@@ -104,11 +106,13 @@ function createSpecialistAgent(
     model: openai(modelName),
     instructions: buildSystemPrompt(context, ROUTE_SCOPES[route]),
     tools: scopedTools,
-    stopWhen: stepCountIs(15),
+    stopWhen: stepCountIs(maxSteps),
     prepareStep: async ({ stepNumber, steps }) => {
       if (!context?.artifact || activeToolNames.length === 0) {
         return { activeTools: [] };
       }
+      const totalToolCalls = steps.reduce((sum, step) => sum + (step.toolCalls?.length ?? 0), 0);
+      const needsMoreTools = Number.isFinite(minToolCalls) && minToolCalls > 0 && totalToolCalls < minToolCalls;
       const planStepIndex = steps.filter((step) => (step.toolCalls?.length ?? 0) > 0).length;
       const plannedAction = resolvedPlan[planStepIndex];
       if (plannedAction) {
@@ -122,7 +126,8 @@ function createSpecialistAgent(
       }
       return {
         activeTools: activeToolNames,
-        toolChoice: stepNumber === 0 && steps.length === 0 && forceToolFirstStep ? 'required' : 'auto',
+        toolChoice:
+          needsMoreTools || (stepNumber === 0 && steps.length === 0 && forceToolFirstStep) ? 'required' : 'auto',
       };
     },
   });

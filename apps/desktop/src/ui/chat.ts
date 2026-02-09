@@ -129,37 +129,67 @@ export class ChatManager {
 }
 
 function toolIcon(status: ToolCallLog['status']): HTMLElement {
+  if (status === 'running') {
+    // Animated spinner for running state
+    const spinner = el('div', {
+      className: 'size-3 relative',
+    });
+    spinner.innerHTML = `<svg class="animate-spin" viewBox="0 0 16 16" fill="none">
+      <circle cx="8" cy="8" r="6" stroke="currentColor" stroke-opacity="0.2" stroke-width="2"/>
+      <path d="M14 8a6 6 0 00-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>`;
+    spinner.style.color = 'var(--accent-cyan)';
+    return spinner;
+  }
+  
   const icon = el('span', {
-    className: 'text-[9px] leading-none',
+    className: 'size-3 flex items-center justify-center text-[10px]',
   });
-
+  
   if (status === 'done') {
-    icon.textContent = '✓';
-    icon.className += ' text-white/30';
-  } else if (status === 'running') {
-    icon.textContent = '·';
-    icon.className += ' text-[var(--accent-cyan)]/50';
+    icon.innerHTML = `<svg viewBox="0 0 16 16" fill="none" class="size-3">
+      <path d="M3 8.5L6.5 12L13 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+    icon.style.color = 'var(--accent-teal)';
+    icon.style.opacity = '0.7';
   } else if (status === 'error') {
-    icon.textContent = '✗';
-    icon.className += ' text-[var(--accent-red)]/50';
+    icon.innerHTML = `<svg viewBox="0 0 16 16" fill="none" class="size-3">
+      <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+    </svg>`;
+    icon.style.color = 'var(--accent-red)';
+    icon.style.opacity = '0.7';
   } else {
-    icon.textContent = '·';
-    icon.className += ' text-white/20';
+    icon.innerHTML = `<svg viewBox="0 0 16 16" fill="currentColor" class="size-2 opacity-30">
+      <circle cx="8" cy="8" r="3"/>
+    </svg>`;
   }
   return icon;
 }
 
 function renderToolCall(tool: ToolCallLog): HTMLElement {
   const row = el('div', {
-    className: 'flex items-center gap-1.5 py-0.5',
+    className: 'flex items-center gap-2 py-1 group transition-opacity',
   });
+  
+  if (tool.status === 'done') {
+    row.style.opacity = '0.5';
+  }
 
   row.append(toolIcon(tool.status));
 
   const label = el('span', {
-    className: 'text-[9px] font-[var(--font-mono)] text-white/30 truncate',
-    text: toolDisplayNames[tool.name] ?? tool.name.toLowerCase(),
+    className: 'text-[11px] font-[var(--font-mono)] truncate transition-colors',
+    text: toolDisplayNames[tool.name] ?? tool.name.replace(/_/g, ' '),
   });
+  
+  if (tool.status === 'running') {
+    label.style.color = 'var(--accent-cyan)';
+  } else if (tool.status === 'error') {
+    label.style.color = 'var(--accent-red)';
+    label.style.opacity = '0.8';
+  } else {
+    label.style.color = 'rgba(255, 255, 255, 0.45)';
+  }
 
   row.append(label);
   return row;
@@ -167,7 +197,9 @@ function renderToolCall(tool: ToolCallLog): HTMLElement {
 
 function renderToolCalls(tools: ToolCallLog[]): HTMLElement {
   const container = el('div', {
-    className: 'mt-2 py-1 px-2 space-y-0 overflow-hidden',
+    className: 'my-2 py-2 px-3 rounded-lg overflow-hidden ' +
+      'bg-gradient-to-r from-white/[0.02] to-transparent ' +
+      'border-l border-white/[0.06]',
     attrs: { 'data-tool-calls': 'true' },
   });
 
