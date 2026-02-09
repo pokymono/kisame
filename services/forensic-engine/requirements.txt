@@ -1,3 +1,4 @@
 # Kisame Forensic Engine Dependencies
-# pyshark  # Wrapper for tshark, commonly used
-# pandas   # For data manipulation
+#
+# The engine uses the system `tshark` binary for protocol decoding and relies
+# only on the Python standard library for parsing/aggregation.
