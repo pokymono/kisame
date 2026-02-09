@@ -2,6 +2,7 @@ import type { PcapSession, AnalysisArtifact } from '../types';
 import { utcNowIso } from '../utils/response';
 import { safeInt, safeFloat, sha1Hex12, canonicalPair } from './tshark-utils';
 import { resolveTsharkPath, tsharkVersion, getTsharkInfo as fetchTsharkInfo } from './tshark';
+import { logInfo, logWarn, logError } from '../utils/logger';
 
 
 function parseTsvLine(line: string): string[] {
@@ -43,6 +44,7 @@ export type AnalyzeOptions = {
 };
 
 export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisArtifact> {
+  const startedAt = Date.now();
   const tsharkPath = resolveTsharkPath();
   if (!tsharkPath) {
     throw new Error(
@@ -51,6 +53,14 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
   }
   const version = await tsharkVersion(tsharkPath);
   const sampleFramesPerSession = Math.max(0, opts.sampleFramesPerSession ?? 8);
+  logInfo('tshark.analyze.start', {
+    file_name: opts.session.fileName,
+    size_bytes: opts.session.sizeBytes,
+    max_packets: opts.maxPackets ?? null,
+    sample_frames: sampleFramesPerSession,
+    tshark_path: tsharkPath,
+    tshark_version: version ?? 'unknown',
+  });
 
   const fields = [
     'frame.number',
@@ -96,6 +106,10 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
   const stderr = await new Response(proc.stderr).text();
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
+    logError('tshark.analyze.error', {
+      exit_code: exitCode,
+      stderr_preview: stderr.slice(0, 400),
+    });
     throw new Error(
       `tshark failed (exit ${exitCode}). Ensure tshark is installed and readable by Bun.\n\nstderr:\n${stderr}`
     );
@@ -103,6 +117,7 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
 
   const lines = stdout.split('\n').filter((l) => l.length);
   if (lines.length === 0) {
+    logWarn('tshark.analyze.empty', { file_name: opts.session.fileName });
     return {
       schema_version: 1,
       generated_at: utcNowIso(),
@@ -316,6 +331,14 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
 
   sessionList.sort((a, b) => (a.first_ts !== b.first_ts ? a.first_ts - b.first_ts : a.id.localeCompare(b.id)));
   timeline.sort((a, b) => (a.ts !== b.ts ? a.ts - b.ts : a.evidence_frame - b.evidence_frame));
+
+  logInfo('tshark.analyze.complete', {
+    file_name: opts.session.fileName,
+    packets: packetCount,
+    sessions: sessionList.length,
+    timeline_events: timeline.length,
+    duration_ms: Date.now() - startedAt,
+  });
 
   return {
     schema_version: 1,

@@ -22,6 +22,7 @@ async function initApp() {
   let timelineKindFilter = 'all';
   type AnalyzeScreen = 'overview' | 'sessions' | 'timeline' | 'evidence' | 'insights';
   let analyzeScreen: AnalyzeScreen = 'overview';
+  const analysisCache = new Map<string, AnalysisArtifact>();
 
   type AppTab = 'capture' | 'analyze' | 'export';
   let activeTab: AppTab = 'analyze';
@@ -123,6 +124,138 @@ async function initApp() {
     scrollThreshold: 80,
   });
 
+  type Workspace = { id: string; name: string };
+  const workspaceStorageKey = 'kisame.workspaces';
+  const workspaceSelectedKey = 'kisame.workspace.selected';
+  const workspaceAssignmentKey = 'kisame.workspace.assignments';
+
+  const loadWorkspaces = (): Workspace[] => {
+    const raw = window.localStorage.getItem(workspaceStorageKey);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as Workspace[];
+      return Array.isArray(parsed) ? parsed.filter((w) => w && w.id && w.name) : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const saveWorkspaces = (workspaces: Workspace[]) => {
+    window.localStorage.setItem(workspaceStorageKey, JSON.stringify(workspaces));
+  };
+
+  const loadWorkspaceAssignments = (): Record<string, string> => {
+    const raw = window.localStorage.getItem(workspaceAssignmentKey);
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const saveWorkspaceAssignments = (assignments: Record<string, string>) => {
+    window.localStorage.setItem(workspaceAssignmentKey, JSON.stringify(assignments));
+  };
+
+  let workspaces: Workspace[] = loadWorkspaces();
+  if (!workspaces.find((w) => w.id === 'default')) {
+    workspaces = [{ id: 'default', name: 'Default Workspace' }, ...workspaces];
+  }
+  saveWorkspaces(workspaces);
+
+  let selectedWorkspaceId =
+    window.localStorage.getItem(workspaceSelectedKey) ?? workspaces[0]?.id ?? 'default';
+  if (selectedWorkspaceId !== 'all' && !workspaces.find((w) => w.id === selectedWorkspaceId)) {
+    selectedWorkspaceId = 'default';
+  }
+  let workspaceAssignments = loadWorkspaceAssignments();
+  let lastWorkspaceId = selectedWorkspaceId;
+
+  const renderWorkspaceOptions = () => {
+    ui.workspaceSelect.replaceChildren();
+    ui.workspaceSelect.add(new Option('ALL WORKSPACES', 'all'));
+    for (const workspace of workspaces) {
+      const option = new Option(workspace.name.toUpperCase(), workspace.id);
+      ui.workspaceSelect.add(option);
+    }
+    ui.workspaceSelect.add(new Option('ADD WORKSPACE…', '__add__'));
+    ui.workspaceSelect.value = selectedWorkspaceId;
+  };
+
+  const assignWorkspaceIfMissing = (sessionId: string) => {
+    if (!workspaceAssignments[sessionId]) {
+      workspaceAssignments[sessionId] = selectedWorkspaceId === 'all' ? 'default' : selectedWorkspaceId;
+    }
+  };
+
+  const filterByWorkspace = (captures: ExplorerCapture[]) => {
+    if (selectedWorkspaceId === 'all') return captures;
+    return captures.filter((capture) => {
+      const workspaceId = workspaceAssignments[capture.session_id] ?? 'default';
+      return workspaceId === selectedWorkspaceId;
+    });
+  };
+
+  renderWorkspaceOptions();
+
+  ui.workspaceSelect.addEventListener('change', () => {
+    const value = ui.workspaceSelect.value;
+    if (value === '__add__') {
+      ui.workspaceSelect.value = lastWorkspaceId;
+      ui.workspaceForm.classList.remove('hidden');
+      ui.workspaceForm.classList.add('flex');
+      ui.workspaceInput.value = '';
+      ui.workspaceInput.focus();
+      return;
+    }
+
+    lastWorkspaceId = value;
+    selectedWorkspaceId = value;
+    window.localStorage.setItem(workspaceSelectedKey, selectedWorkspaceId);
+    ui.workspaceForm.classList.add('hidden');
+    ui.workspaceForm.classList.remove('flex');
+    renderExplorerCaptures();
+  });
+
+  const submitWorkspace = () => {
+    const name = ui.workspaceInput.value.trim();
+    if (!name) {
+      ui.workspaceInput.focus();
+      return;
+    }
+    const id = crypto.randomUUID();
+    workspaces = [...workspaces, { id, name }];
+    saveWorkspaces(workspaces);
+    selectedWorkspaceId = id;
+    lastWorkspaceId = id;
+    window.localStorage.setItem(workspaceSelectedKey, selectedWorkspaceId);
+    ui.workspaceForm.classList.add('hidden');
+    ui.workspaceForm.classList.remove('flex');
+    renderWorkspaceOptions();
+    renderExplorerCaptures();
+  };
+
+  ui.workspaceAddButton.addEventListener('click', submitWorkspace);
+  ui.workspaceCancelButton.addEventListener('click', () => {
+    ui.workspaceForm.classList.add('hidden');
+    ui.workspaceForm.classList.remove('flex');
+    ui.workspaceInput.value = '';
+    ui.workspaceSelect.value = selectedWorkspaceId;
+  });
+  ui.workspaceInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submitWorkspace();
+    } else if (event.key === 'Escape') {
+      ui.workspaceForm.classList.add('hidden');
+      ui.workspaceForm.classList.remove('flex');
+      ui.workspaceInput.value = '';
+      ui.workspaceSelect.value = selectedWorkspaceId;
+    }
+  });
+
   const sessionElements = new Map<string, HTMLElement>();
   const explorerElements = new Map<string, HTMLElement>();
 
@@ -194,12 +327,16 @@ async function initApp() {
     ui.uploadIndicator.classList.add('active');
 
     if (event.stage === 'upload') {
-      const percent =
-        typeof event.percent === 'number'
-          ? Math.max(0, Math.min(100, event.percent))
-          : event.total
-            ? Math.min(100, Math.round(((event.loaded ?? 0) / event.total) * 100))
-            : 0;
+      let percent: number | null = null;
+      if (typeof event.percent === 'number' && Number.isFinite(event.percent)) {
+        percent = event.percent;
+      } else if (event.total && event.total > 0) {
+        percent = Math.round(((event.loaded ?? 0) / event.total) * 100);
+      }
+      if (percent == null || !Number.isFinite(percent)) {
+        percent = 0;
+      }
+      percent = Math.max(0, Math.min(100, percent));
       const blocks = 10;
       const filled = Math.min(blocks, Math.max(0, Math.round((percent / 100) * blocks)));
       const bar = `█`.repeat(filled) + `░`.repeat(blocks - filled);
@@ -241,12 +378,14 @@ async function initApp() {
   function renderExplorerCaptures() {
     explorerElements.clear();
 
-    if (!explorerCaptures.length) {
+    const visibleCaptures = filterByWorkspace(explorerCaptures);
+
+    if (!visibleCaptures.length) {
       ui.explorerList.replaceChildren(ui.explorerEmptyState);
       return;
     }
 
-    const rows = explorerCaptures.map((capture) => {
+    const rows = visibleCaptures.map((capture) => {
       const row = el('button', {
         className: 'w-full rounded px-3 py-2 text-left transition-all data-card',
         attrs: { type: 'button', 'data-capture-id': capture.session_id },
@@ -281,6 +420,15 @@ async function initApp() {
     try {
       const res = await fetch(`${explanationBaseUrl}/pcap/list`);
       if (!res.ok) {
+        if (res.status === 404) {
+          explorerCaptures = [];
+          setExplorerEmptyState(
+            'EXPLORER UNAVAILABLE',
+            'Update the backend service.'
+          );
+          renderExplorerCaptures();
+          return;
+        }
         const msg = await res.text().catch(() => '');
         throw new Error(`Explorer refresh failed (${res.status}). ${msg}`);
       }
@@ -289,6 +437,10 @@ async function initApp() {
       explorerCaptures.sort(
         (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
+      for (const capture of explorerCaptures) {
+        assignWorkspaceIfMissing(capture.session_id);
+      }
+      saveWorkspaceAssignments(workspaceAssignments);
       setExplorerEmptyState(
         'NO FILES',
         'Open a PCAP file to begin forensic analysis'
@@ -297,7 +449,7 @@ async function initApp() {
     } catch {
       explorerCaptures = [];
       setExplorerEmptyState(
-        'BACKEND OFFLINE',
+        'EXPLORER UNAVAILABLE',
         'Unable to fetch captures from the analysis service'
       );
       renderExplorerCaptures();
@@ -319,6 +471,15 @@ async function initApp() {
   }
 
   async function analyzeExplorerCapture(sessionId: string) {
+    const cached = analysisCache.get(sessionId);
+    if (cached) {
+      analysis = cached;
+      captureSessionId = cached.pcap?.session_id ?? sessionId;
+      selectedSessionId = null;
+      render();
+      setActiveTab('analyze');
+      return;
+    }
     await ensureBackendTsharkAvailable();
     const res = await fetch(`${explanationBaseUrl}/tools/analyzePcap`, {
       method: 'POST',
@@ -330,7 +491,9 @@ async function initApp() {
       throw new Error(`Analyze failed (${res.status}). ${msg}`);
     }
     analysis = (await res.json()) as AnalysisArtifact;
-    captureSessionId = analysis.pcap?.session_id ?? sessionId;
+    const cacheKey = analysis.pcap?.session_id ?? sessionId;
+    analysisCache.set(cacheKey, analysis);
+    captureSessionId = cacheKey;
     selectedSessionId = null;
     setAnalyzeScreen('overview');
     render();
@@ -472,6 +635,7 @@ async function initApp() {
       }
       analysis = (await analyzeRes.json()) as AnalysisArtifact;
       captureSessionId = analysis.pcap?.session_id ?? stopData.session_id;
+      analysisCache.set(captureSessionId, analysis);
       selectedSessionId = null;
       stoppedOk = true;
       render();
@@ -1157,6 +1321,9 @@ async function initApp() {
       if (result.canceled) return;
       analysis = result.analysis as AnalysisArtifact;
       captureSessionId = analysis.pcap?.session_id ?? null;
+      if (captureSessionId) {
+        analysisCache.set(captureSessionId, analysis);
+      }
       selectedSessionId = null;
       timelineScope = 'session';
       timelineSearchQuery = '';
