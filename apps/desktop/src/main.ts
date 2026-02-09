@@ -1663,8 +1663,7 @@ async function initApp() {
     await startLiveCapture();
   });
 
-  async function sendChatQuery() {
-    const query = ui.chatInput.value.trim();
+  async function sendChatQueryText(query: string, options?: { displayText?: string; contextMode?: WorkflowContextMode }) {
     if (!query) return;
 
     // History push
@@ -1673,11 +1672,10 @@ async function initApp() {
     chatCurrentDraft = '';
 
     // Add user message
-    const userMessage: ChatMessage = { role: 'user', text: query };
+    const userMessage: ChatMessage = { role: 'user', text: options?.displayText ?? query };
     chatManager.addMessage(userMessage);
     
     // Clear input and force scroll to bottom
-    ui.chatInput.value = '';
     chatManager.forceScrollToBottom();
 
     const aiMessage: ChatMessage = {
@@ -1706,7 +1704,7 @@ async function initApp() {
       const response = await fetch(`${explanationBaseUrl}/chat/stream`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ query: trimmed, context }),
+        body: JSON.stringify({ query: query, context }),
       });
 
       if (!response.ok || !response.body) {
