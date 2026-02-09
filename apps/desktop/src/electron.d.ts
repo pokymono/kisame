@@ -21,6 +21,15 @@ export interface ElectronAPI {
     context?: { session_id?: string; artifact?: unknown }
   ) => Promise<ChatQueryResult>;
   getBackendUrl: () => Promise<string>;
+  onUploadProgress: (
+    handler: (event: {
+      stage: 'idle' | 'upload' | 'analyze' | 'done' | 'error';
+      loaded?: number;
+      total?: number;
+      percent?: number;
+      message?: string;
+    }) => void
+  ) => () => void;
 }
 
 declare global {

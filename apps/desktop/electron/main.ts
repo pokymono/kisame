@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { spawn } from 'child_process';
-import { existsSync, readFileSync } from 'fs';
-import { readFile } from 'fs/promises';
+import { existsSync, readFileSync, createReadStream } from 'fs';
+import { stat } from 'fs/promises';
+import { ReadableStream } from 'stream/web';
 import * as path from 'path';
 
 type OpenPcapAndAnalyzeResult =
@@ -78,6 +79,33 @@ function getBunServiceUrl(): string {
   return 'http://localhost:8787';
 }
 
+type UploadProgressEvent = {
+  stage: 'idle' | 'upload' | 'analyze' | 'done' | 'error';
+  loaded?: number;
+  total?: number;
+  percent?: number;
+  message?: string;
+};
+
+function sendUploadProgress(win: BrowserWindow | undefined, event: UploadProgressEvent) {
+  if (!win) return;
+  win.webContents.send('kisame:uploadProgress', event);
+}
+
+async function ensureBackendTshark(bunUrl: string): Promise<void> {
+  const res = await fetch(`${bunUrl}/tshark/version`);
+  if (!res.ok) {
+    const msg = await res.text().catch(() => '');
+    throw new Error(`Backend tshark check failed (${res.status}). ${msg}`);
+  }
+  const data = (await res.json()) as { resolved?: boolean; tshark_path?: string | null };
+  if (!data?.resolved) {
+    throw new Error(
+      `Backend at ${bunUrl} is missing tshark. Install Wireshark/tshark on the backend VM or set TSHARK_PATH. You can run scripts/setup-backend.sh on the VM.`
+    );
+  }
+}
+
 const createWindow = (): void => {
   const win = new BrowserWindow({
     width: 1200,
@@ -116,20 +144,56 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
   // Preferred path: upload to Bun service and run tshark there (AnalyzePCAP tool).
   const bunUrl = getBunServiceUrl();
   try {
-    const bytes = await readFile(pcapPath);
+    await ensureBackendTshark(bunUrl);
+    const stats = await stat(pcapPath);
+    const total = stats.size;
+    let loaded = 0;
+    let lastEmit = 0;
+
+    sendUploadProgress(win, { stage: 'upload', loaded: 0, total, percent: 0 });
+
+    const fileStream = createReadStream(pcapPath);
+    const uploadStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        fileStream.on('data', (chunk: string | Buffer) => {
+          const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
+          loaded += buffer.length;
+          controller.enqueue(new Uint8Array(buffer));
+          const now = Date.now();
+          if (now - lastEmit > 80 || loaded === total) {
+            lastEmit = now;
+            const percent = total ? Math.round((loaded / total) * 100) : undefined;
+            sendUploadProgress(win, { stage: 'upload', loaded, total, percent });
+          }
+        });
+        fileStream.on('end', () => {
+          controller.close();
+          sendUploadProgress(win, { stage: 'upload', loaded: total, total, percent: 100 });
+        });
+        fileStream.on('error', (err) => controller.error(err));
+      },
+      cancel() {
+        fileStream.destroy();
+      },
+    });
+
     const uploadRes = await fetch(`${bunUrl}/pcap`, {
       method: 'POST',
       headers: {
         'content-type': 'application/octet-stream',
         'x-filename': path.basename(pcapPath),
       },
-      body: bytes,
-    });
+      body: uploadStream as unknown as ReadableStream,
+      // Required for streaming request bodies in Node/Electron fetch.
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
     if (!uploadRes.ok) {
       const msg = await uploadRes.text().catch(() => '');
       throw new Error(`Bun upload failed (${uploadRes.status}). ${msg}`);
     }
     const uploaded = (await uploadRes.json()) as { session_id: string };
+
+    sendUploadProgress(win, { stage: 'analyze' });
 
     const analyzeBody: { session_id: string; max_packets?: number } = { session_id: uploaded.session_id };
     if (process.env.KISAME_MAX_PACKETS) analyzeBody.max_packets = Number(process.env.KISAME_MAX_PACKETS);
@@ -144,8 +208,10 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
       throw new Error(`Bun analyze failed (${analyzeRes.status}). ${msg}`);
     }
     const analysis = (await analyzeRes.json()) as unknown;
+    sendUploadProgress(win, { stage: 'done' });
     return { canceled: false, pcapPath, analysis };
   } catch (e) {
+    sendUploadProgress(win, { stage: 'error', message: (e as Error).message ?? String(e) });
     // Fallback: local Python engine (still uses tshark locally).
     const python = getPythonCommand();
     const enginePath = getEngineEntryPath();
@@ -172,6 +238,7 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
         `Bun analyze failed (${(e as Error).message ?? String(e)}), and local engine returned non-JSON.\n\nstdout:\n${stdout}\n\nstderr:\n${stderr}`
       );
     }
+    sendUploadProgress(win, { stage: 'done' });
     return { canceled: false, pcapPath, analysis };
   }
 });

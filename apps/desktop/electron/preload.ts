@@ -8,6 +8,14 @@ type ChatQueryResult = {
   context_available: boolean;
 };
 
+type UploadProgressEvent = {
+  stage: 'idle' | 'upload' | 'analyze' | 'done' | 'error';
+  loaded?: number;
+  total?: number;
+  percent?: number;
+  message?: string;
+};
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Add your exposed APIs here
   platform: process.platform,
@@ -20,4 +28,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendChatQuery: (query: string, context?: { session_id?: string; artifact?: unknown }) =>
     ipcRenderer.invoke('kisame:sendChatQuery', query, context) as Promise<ChatQueryResult>,
   getBackendUrl: () => ipcRenderer.invoke('kisame:getBackendUrl') as Promise<string>,
+  onUploadProgress: (handler: (event: UploadProgressEvent) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: UploadProgressEvent) => {
+      handler(payload);
+    };
+    ipcRenderer.on('kisame:uploadProgress', listener);
+    return () => ipcRenderer.removeListener('kisame:uploadProgress', listener);
+  },
 });
