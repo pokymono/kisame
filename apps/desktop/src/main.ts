@@ -39,6 +39,7 @@ async function initApp() {
   let workflows: Workflow[] = [];
   let selectedWorkflowId: string | null = null;
   let isWorkflowRunning = false;
+  let workflowPromptTimer: number | null = null;
 
   type AppTab = 'capture' | 'analyze' | 'export';
   let activeTab: AppTab = 'analyze';
@@ -403,6 +404,204 @@ async function initApp() {
       .filter(Boolean);
   }
 
+  type WorkflowModalIntent = 'primary' | 'danger' | 'neutral';
+  type WorkflowModalResult = { action: 'confirm'; selectedId?: string | null } | { action: 'cancel' };
+  type WorkflowModalConfig = {
+    title: string;
+    subtitle?: string;
+    body?: string;
+    workflows?: Workflow[];
+    defaultId?: string | null;
+    confirmLabel?: string;
+    cancelLabel?: string;
+    confirmIntent?: WorkflowModalIntent;
+    showCancel?: boolean;
+  };
+
+  const workflowModalConfirmBase =
+    'cyber-btn px-3 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] uppercase';
+  const workflowModalCancelClass =
+    'cyber-btn px-3 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-white/60 uppercase';
+  const workflowModalIntentClass: Record<WorkflowModalIntent, string> = {
+    primary: 'text-[var(--accent-teal)]',
+    danger: 'text-[var(--accent-red)]',
+    neutral: 'text-white/70',
+  };
+
+  let workflowModalResolve: ((result: WorkflowModalResult) => void) | null = null;
+  let workflowModalCleanup: (() => void) | null = null;
+  let workflowModalSelectedId: string | null = null;
+
+  function setWorkflowModalOpen(open: boolean) {
+    ui.workflowModalOverlay.classList.toggle('hidden', !open);
+    ui.workflowModalOverlay.classList.toggle('flex', open);
+    ui.workflowModalOverlay.setAttribute('aria-hidden', open ? 'false' : 'true');
+    document.body.style.overflow = open ? 'hidden' : '';
+  }
+
+  function closeWorkflowModal(result: WorkflowModalResult) {
+    if (!workflowModalResolve) return;
+    setWorkflowModalOpen(false);
+    ui.workflowModalList.replaceChildren();
+    ui.workflowModalError.textContent = '';
+    ui.workflowModalError.classList.add('hidden');
+    workflowModalCleanup?.();
+    workflowModalCleanup = null;
+    const resolve = workflowModalResolve;
+    workflowModalResolve = null;
+    workflowModalSelectedId = null;
+    resolve(result);
+  }
+
+  function openWorkflowModal(config: WorkflowModalConfig): Promise<WorkflowModalResult> {
+    if (workflowModalResolve) {
+      closeWorkflowModal({ action: 'cancel' });
+    }
+
+    const showCancel = config.showCancel !== false;
+    const hasWorkflows = Boolean(config.workflows && config.workflows.length);
+    workflowModalSelectedId = config.defaultId ?? config.workflows?.[0]?.id ?? null;
+
+    ui.workflowModalTitle.textContent = config.title;
+    ui.workflowModalSubtitle.textContent = config.subtitle ?? '';
+    ui.workflowModalSubtitle.classList.toggle('hidden', !config.subtitle);
+    ui.workflowModalBody.textContent = config.body ?? '';
+    ui.workflowModalBody.classList.toggle('hidden', !config.body);
+
+    ui.workflowModalList.replaceChildren();
+    ui.workflowModalList.classList.toggle('hidden', !hasWorkflows);
+
+    if (hasWorkflows) {
+      const rows = config.workflows!.map((wf) => {
+        const defaultTag =
+          config.defaultId && config.defaultId === wf.id
+            ? el('div', {
+                className: 'mt-2 text-[9px] font-[var(--font-mono)] text-[var(--accent-teal)]/70 uppercase tracking-wider',
+                text: 'DEFAULT ON LOAD',
+              })
+            : el('div', { className: 'mt-2 text-[9px] font-[var(--font-mono)] text-white/10', text: ' ' });
+
+        const row = el('button', {
+          className: 'w-full rounded px-3 py-3 text-left transition-all data-card',
+          attrs: { type: 'button', 'data-workflow-id': wf.id, 'aria-pressed': 'false' },
+          children: [
+            el('div', {
+              className: 'flex items-center justify-between gap-2',
+              children: [
+                el('div', { className: 'text-[11px] font-[var(--font-mono)] text-white/80 truncate', text: wf.name }),
+                el('div', { className: 'text-[9px] font-[var(--font-mono)] text-white/35', text: `${wf.prompts.length} steps` }),
+              ],
+            }),
+            el('div', {
+              className: 'mt-1 text-[9px] font-[var(--font-mono)] text-white/30 uppercase tracking-wider',
+              text: wf.contextMode === 'session' ? 'SESSION CONTEXT' : 'CAPTURE CONTEXT',
+            }),
+            defaultTag,
+          ],
+        }) as HTMLButtonElement;
+
+        if (wf.id === workflowModalSelectedId) {
+          row.classList.add('selected');
+          row.setAttribute('aria-pressed', 'true');
+        }
+
+        row.addEventListener('click', () => {
+          workflowModalSelectedId = wf.id;
+          const children = Array.from(ui.workflowModalList.children) as HTMLElement[];
+          for (const child of children) {
+            const isSelected = child.getAttribute('data-workflow-id') === wf.id;
+            child.classList.toggle('selected', isSelected);
+            child.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+          }
+          ui.workflowModalConfirmButton.disabled = false;
+          ui.workflowModalConfirmButton.classList.remove('opacity-60');
+        });
+
+        row.addEventListener('dblclick', () => {
+          closeWorkflowModal({ action: 'confirm', selectedId: wf.id });
+        });
+
+        return row;
+      });
+
+      ui.workflowModalList.replaceChildren(...rows);
+    }
+
+    ui.workflowModalError.textContent = '';
+    ui.workflowModalError.classList.add('hidden');
+
+    const confirmIntent = config.confirmIntent ?? 'primary';
+    ui.workflowModalConfirmButton.textContent = config.confirmLabel ?? (hasWorkflows ? 'RUN' : 'OK');
+    ui.workflowModalConfirmButton.className = `${workflowModalConfirmBase} ${workflowModalIntentClass[confirmIntent]}`;
+    const confirmDisabled = hasWorkflows && !workflowModalSelectedId;
+    ui.workflowModalConfirmButton.disabled = confirmDisabled;
+    ui.workflowModalConfirmButton.classList.toggle('opacity-60', confirmDisabled);
+
+    ui.workflowModalCancelButton.textContent = config.cancelLabel ?? 'CANCEL';
+    ui.workflowModalCancelButton.className = workflowModalCancelClass;
+    ui.workflowModalCancelButton.classList.toggle('hidden', !showCancel);
+
+    const onCancel = () => {
+      if (showCancel) {
+        closeWorkflowModal({ action: 'cancel' });
+      } else {
+        closeWorkflowModal({ action: 'confirm' });
+      }
+    };
+
+    const onConfirm = () => {
+      if (hasWorkflows && !workflowModalSelectedId) {
+        ui.workflowModalError.textContent = 'Select a workflow to continue.';
+        ui.workflowModalError.classList.remove('hidden');
+        return;
+      }
+      closeWorkflowModal({ action: 'confirm', selectedId: workflowModalSelectedId });
+    };
+
+    const onOverlayClick = (event: MouseEvent) => {
+      if (event.target === ui.workflowModalOverlay) {
+        onCancel();
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCancel();
+      }
+      if (event.key === 'Enter' && !ui.workflowModalConfirmButton.disabled) {
+        event.preventDefault();
+        onConfirm();
+      }
+    };
+
+    ui.workflowModalCancelButton.addEventListener('click', onCancel);
+    ui.workflowModalConfirmButton.addEventListener('click', onConfirm);
+    ui.workflowModalOverlay.addEventListener('click', onOverlayClick);
+    document.addEventListener('keydown', onKeyDown);
+
+    workflowModalCleanup = () => {
+      ui.workflowModalCancelButton.removeEventListener('click', onCancel);
+      ui.workflowModalConfirmButton.removeEventListener('click', onConfirm);
+      ui.workflowModalOverlay.removeEventListener('click', onOverlayClick);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+
+    setWorkflowModalOpen(true);
+    requestAnimationFrame(() => {
+      if (hasWorkflows) {
+        const selected = ui.workflowModalList.querySelector('[aria-pressed="true"]') as HTMLElement | null;
+        selected?.focus();
+      } else {
+        ui.workflowModalConfirmButton.focus();
+      }
+    });
+
+    return new Promise((resolve) => {
+      workflowModalResolve = resolve;
+    });
+  }
+
   function renderWorkflowsUI() {
     if (!workflows.length) {
       ui.workflowList.replaceChildren(
@@ -439,7 +638,7 @@ async function initApp() {
           wf.autoRun
             ? el('div', {
                 className: 'mt-2 text-[9px] font-[var(--font-mono)] text-[var(--accent-teal)]/70 uppercase tracking-wider',
-                text: 'AUTO-RUN',
+                text: 'DEFAULT ON LOAD',
               })
             : el('div', { className: 'mt-2 text-[9px] font-[var(--font-mono)] text-white/10', text: ' ' }),
         ],
@@ -506,12 +705,19 @@ async function initApp() {
     setSelectedWorkflow(id);
   }
 
-  function deleteSelectedWorkflow() {
+  async function deleteSelectedWorkflow() {
     if (!selectedWorkflowId) return;
     const wf = workflows.find((w) => w.id === selectedWorkflowId);
     if (!wf) return;
-    const ok = confirm(`Delete workflow "${wf.name}"?`);
-    if (!ok) return;
+    const result = await openWorkflowModal({
+      title: 'Delete workflow?',
+      subtitle: 'WORKFLOWS',
+      body: `This will permanently remove "${wf.name}".`,
+      confirmLabel: 'DELETE',
+      cancelLabel: 'CANCEL',
+      confirmIntent: 'danger',
+    });
+    if (result.action !== 'confirm') return;
     const next = workflows.filter((w) => w.id !== selectedWorkflowId);
     saveWorkflows(next);
     setSelectedWorkflow(next[0]?.id ?? null);
@@ -533,10 +739,49 @@ async function initApp() {
     return workflows.find((w) => w.autoRun && w.prompts.length > 0) ?? null;
   }
 
+  function getRunnableWorkflows(): Workflow[] {
+    return workflows.filter((w) => w.prompts.length > 0);
+  }
+
+  async function promptPickWorkflowToRunAfterCaptureLoad(): Promise<Workflow | null> {
+    const runnable = getRunnableWorkflows();
+    if (!runnable.length) return null;
+
+    const defaultWorkflow = getAutoRunWorkflow();
+    const body =
+      runnable.length === 1
+        ? `Run "${runnable[0].name}" now?`
+        : defaultWorkflow
+          ? `Select a workflow to run now. Default is "${defaultWorkflow.name}".`
+          : 'Select a workflow to run now.';
+
+    const result = await openWorkflowModal({
+      title: 'Run workflow now?',
+      subtitle: 'WORKFLOWS',
+      body,
+      workflows: runnable,
+      defaultId: defaultWorkflow?.id ?? runnable[0]?.id ?? null,
+      confirmLabel: 'RUN',
+      cancelLabel: 'SKIP',
+      confirmIntent: 'primary',
+    });
+
+    if (result.action !== 'confirm') return null;
+    const selected = runnable.find((wf) => wf.id === result.selectedId) ?? null;
+    return selected;
+  }
+
   async function runWorkflow(workflow: Workflow): Promise<void> {
     if (isWorkflowRunning) return;
     if (!analysis) {
-      alert('Load a capture first.');
+      await openWorkflowModal({
+        title: 'Workflow unavailable',
+        subtitle: 'WORKFLOWS',
+        body: 'Load a capture first.',
+        confirmLabel: 'OK',
+        confirmIntent: 'neutral',
+        showCancel: false,
+      });
       return;
     }
     if (!workflow.prompts.length) return;
@@ -558,10 +803,23 @@ async function initApp() {
     }
   }
 
-  async function maybeAutoRunWorkflow(): Promise<void> {
-    const wf = getAutoRunWorkflow();
+  async function maybePromptRunWorkflowAfterCaptureLoad(): Promise<void> {
+    if (isWorkflowRunning) return;
+    if (!analysis) return;
+    const wf = await promptPickWorkflowToRunAfterCaptureLoad();
     if (!wf) return;
     await runWorkflow(wf);
+  }
+
+  function schedulePromptRunWorkflowAfterCaptureLoad(): void {
+    if (workflowPromptTimer) {
+      window.clearTimeout(workflowPromptTimer);
+      workflowPromptTimer = null;
+    }
+    workflowPromptTimer = window.setTimeout(() => {
+      workflowPromptTimer = null;
+      void maybePromptRunWorkflowAfterCaptureLoad();
+    }, 0);
   }
 
   function renderUploadIndicator(event: {
@@ -758,7 +1016,7 @@ async function initApp() {
     setAnalyzeScreen('overview');
     render();
     setActiveTab('analyze');
-    void maybeAutoRunWorkflow();
+    schedulePromptRunWorkflowAfterCaptureLoad();
   }
 
   function setWelcomeVisible(visible: boolean) {
@@ -903,7 +1161,7 @@ async function initApp() {
       render();
       setActiveTab('analyze');
       void refreshExplorerCaptures();
-      void maybeAutoRunWorkflow();
+      schedulePromptRunWorkflowAfterCaptureLoad();
     } catch (err) {
       ui.captureBadge.textContent = liveCaptureInterface
         ? `Live: ${liveCaptureInterface}`
@@ -1516,8 +1774,8 @@ async function initApp() {
     upsertWorkflowFromEditor(selectedWorkflowId);
   });
 
-  ui.workflowDeleteButton.addEventListener('click', () => {
-    deleteSelectedWorkflow();
+  ui.workflowDeleteButton.addEventListener('click', async () => {
+    await deleteSelectedWorkflow();
   });
 
   ui.workflowRunButton.addEventListener('click', async () => {
@@ -1645,7 +1903,7 @@ async function initApp() {
       render();
       setActiveTab('analyze');
       void refreshExplorerCaptures();
-      void maybeAutoRunWorkflow();
+      schedulePromptRunWorkflowAfterCaptureLoad();
     } catch (err) {
       console.error(err);
       alert((err as Error).message ?? String(err));
