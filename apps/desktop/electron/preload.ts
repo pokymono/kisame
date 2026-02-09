@@ -36,19 +36,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('kisame:uploadProgress', listener);
   },
   
-  // Terminal APIs
+  // Terminal APIs (multi-instance)
   terminal: {
-    create: (cols: number, rows: number) => ipcRenderer.invoke('terminal:create', cols, rows),
-    write: (data: string) => ipcRenderer.invoke('terminal:write', data),
-    resize: (cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', cols, rows),
-    kill: () => ipcRenderer.invoke('terminal:kill'),
-    onData: (handler: (data: string) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: string) => handler(data);
+    create: (cols: number, rows: number) => 
+      ipcRenderer.invoke('terminal:create', cols, rows) as Promise<{ success: boolean; id: string }>,
+    write: (id: string, data: string) => ipcRenderer.invoke('terminal:write', id, data),
+    resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', id, cols, rows),
+    kill: (id: string) => ipcRenderer.invoke('terminal:kill', id),
+    onData: (handler: (id: string, data: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { id: string; data: string }) => {
+        handler(payload.id, payload.data);
+      };
       ipcRenderer.on('terminal:data', listener);
       return () => ipcRenderer.removeListener('terminal:data', listener);
     },
-    onExit: (handler: (exitCode: number) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, exitCode: number) => handler(exitCode);
+    onExit: (handler: (id: string, exitCode: number) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { id: string; exitCode: number }) => {
+        handler(payload.id, payload.exitCode);
+      };
       ipcRenderer.on('terminal:exit', listener);
       return () => ipcRenderer.removeListener('terminal:exit', listener);
     },
