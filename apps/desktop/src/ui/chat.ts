@@ -254,7 +254,7 @@ export function updateMessageElement(
   element: HTMLElement,
   message: ChatMessage
 ): void {
-  const bubble = element.children[1] as HTMLElement | undefined;
+  const bubble = element.querySelector('[data-content]')?.parentElement as HTMLElement | null;
   if (!bubble) return;
 
   const existingStatus = bubble.querySelector('[data-status]');
