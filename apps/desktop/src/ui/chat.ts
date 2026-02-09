@@ -3,21 +3,23 @@ import { renderMarkdown, destroyMarkdown } from './markdown';
 import type { ChatMessage, ToolCallLog } from '../types';
 
 const toolDisplayNames: Record<string, string> = {
-  pcap_overview: 'overview',
-  list_sessions: 'sessions',
-  get_session: 'session detail',
-  get_timeline: 'timeline',
-  search_timeline: 'search',
-  pcap_search: 'search',
-  pcap_domains: 'domains',
-  pcap_domain_sessions: 'domain sessions',
-  pcap_session_domains: 'session domains',
-  pcap_sessions_query: 'query',
-  pcap_top_talkers: 'top talkers',
-  pcap_protocols: 'protocols',
-  pcap_timeline_range: 'timeline range',
-  pcap_event_kinds: 'event kinds',
-  get_evidence_frames: 'frames',
+  pcap_overview: 'Loading overview',
+  list_sessions: 'Listing sessions',
+  get_session: 'Fetching session details',
+  get_timeline: 'Building timeline',
+  search_timeline: 'Searching timeline',
+  pcap_search: 'Searching packets',
+  pcap_domains: 'Listing domains',
+  pcap_domain_sessions: 'Finding sessions for domain',
+  pcap_session_domains: 'Finding domains in session',
+  pcap_sessions_query: 'Querying sessions',
+  pcap_top_talkers: 'Finding top talkers',
+  pcap_protocols: 'Analyzing protocols',
+  pcap_tcp_streams: 'Listing TCP streams',
+  pcap_follow_tcp_stream: 'Following TCP stream',
+  pcap_timeline_range: 'Getting timeline range',
+  pcap_event_kinds: 'Listing event types',
+  get_evidence_frames: 'Fetching evidence frames',
 };
 
 export interface ChatManagerOptions {
@@ -53,7 +55,7 @@ export class ChatManager {
     if (this.scrollRAF) {
       cancelAnimationFrame(this.scrollRAF);
     }
-    
+
     this.scrollRAF = requestAnimationFrame(() => {
       this.container.scrollTo({
         top: this.container.scrollHeight,
@@ -65,13 +67,13 @@ export class ChatManager {
 
   addMessage(message: ChatMessage): void {
     this.messages.push(message);
-    
+
     this.emptyState.classList.add('hidden');
-    
+
     const element = createMessageElement(message);
     this.elementMap.set(message, element);
     this.container.appendChild(element);
-    
+
     if (!this.isUserScrolled) {
       this.scrollToBottom();
     }
@@ -80,9 +82,9 @@ export class ChatManager {
   updateMessage(message: ChatMessage): void {
     const element = this.elementMap.get(message);
     if (!element) return;
-    
+
     updateMessageElement(element, message);
-    
+
     if (!this.isUserScrolled && message.isStreaming) {
       this.scrollToBottom();
     }
@@ -106,7 +108,7 @@ export class ChatManager {
         }
       }
     }
-    
+
     this.messages = [];
     this.container.replaceChildren();
     this.emptyState.classList.remove('hidden');
@@ -130,7 +132,7 @@ function toolIcon(status: ToolCallLog['status']): HTMLElement {
   const icon = el('span', {
     className: 'text-[9px] leading-none',
   });
-  
+
   if (status === 'done') {
     icon.textContent = '✓';
     icon.className += ' text-white/30';
@@ -151,14 +153,14 @@ function renderToolCall(tool: ToolCallLog): HTMLElement {
   const row = el('div', {
     className: 'flex items-center gap-1.5 py-0.5',
   });
-  
+
   row.append(toolIcon(tool.status));
-  
+
   const label = el('span', {
     className: 'text-[9px] font-[var(--font-mono)] text-white/30 truncate',
     text: toolDisplayNames[tool.name] ?? tool.name.toLowerCase(),
   });
-  
+
   row.append(label);
   return row;
 }
@@ -168,7 +170,7 @@ function renderToolCalls(tools: ToolCallLog[]): HTMLElement {
     className: 'mt-2 py-1 px-2 space-y-0 overflow-hidden',
     attrs: { 'data-tool-calls': 'true' },
   });
-  
+
   for (const tool of tools) {
     container.append(renderToolCall(tool));
   }
@@ -206,12 +208,12 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
       className: 'py-1.5',
       attrs: { 'data-status': 'true' },
     });
-    
+
     const statusText = el('span', {
       className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] uppercase status-shimmer inline-block px-1 rounded',
       text: message.status,
     });
-    
+
     statusRow.append(statusText);
     bubble.append(statusRow);
   }
@@ -267,12 +269,12 @@ export function updateMessageElement(
         className: 'py-1.5',
         attrs: { 'data-status': 'true' },
       });
-      
+
       const statusText = el('span', {
         className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] uppercase status-shimmer inline-block px-1 rounded',
         text: message.status,
       });
-      
+
       statusRow.append(statusText);
       bubble.prepend(statusRow);
     }
@@ -313,7 +315,7 @@ export function updateMessageElement(
     } else if (message.text) {
       contentEl.classList.add('typing-cursor');
     }
-    
+
     if (message.text) {
       renderMarkdown(contentEl, message.text, Boolean(message.isStreaming));
     } else if (message.isStreaming && !message.status) {

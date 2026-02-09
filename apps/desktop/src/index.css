@@ -381,6 +381,21 @@
   animation: uploadBlink 1s steps(2, end) infinite;
 }
 
+.workflow-modal {
+  background: rgba(24, 26, 29, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.workflow-modal-panel {
+  background: var(--app-surface);
+  border: 1px solid var(--app-line-strong);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.workflow-modal-accent {
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+}
+
 @keyframes shimmer {
   0% {
     background-position: 200% 0;

@@ -7,6 +7,7 @@ export {
 } from './session-manager';
 export { analyzeWithTshark, getTsharkInfo } from './analyzer';
 export { explainSession } from './explainer';
+export { listTcpStreams, followTcpStream } from './streams';
 export {
   listCaptureInterfaces,
   startLiveCapture,

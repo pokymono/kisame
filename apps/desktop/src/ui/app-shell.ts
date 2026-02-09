@@ -50,6 +50,7 @@ export type AppShellRefs = {
   chatEmptyState: HTMLElement;
   chatInput: HTMLInputElement;
   chatSendBtn: HTMLButtonElement;
+  chatStopBtn: HTMLButtonElement;
   sessionIdLabel: HTMLElement;
   welcomePanel: HTMLElement;
   overviewLayout: HTMLElement;
@@ -75,6 +76,14 @@ export type AppShellRefs = {
   workflowSaveButton: HTMLButtonElement;
   workflowRunButton: HTMLButtonElement;
   workflowDeleteButton: HTMLButtonElement;
+  workflowModalOverlay: HTMLElement;
+  workflowModalTitle: HTMLElement;
+  workflowModalSubtitle: HTMLElement;
+  workflowModalBody: HTMLElement;
+  workflowModalList: HTMLElement;
+  workflowModalError: HTMLElement;
+  workflowModalCancelButton: HTMLButtonElement;
+  workflowModalConfirmButton: HTMLButtonElement;
 };
 
 export function createAppShell(root: HTMLElement): AppShellRefs {
@@ -880,7 +889,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'accent-[var(--accent-cyan)]',
     attrs: { type: 'checkbox' },
   }) as HTMLInputElement;
-  workflowAutoRunRow.append(workflowAutoRunCheckbox, el('span', { text: 'Auto-run this workflow on capture load' }));
+  workflowAutoRunRow.append(workflowAutoRunCheckbox, el('span', { text: 'Default workflow after capture load' }));
 
   const workflowActions = el('div', { className: 'flex items-center gap-2 flex-wrap' });
   const workflowNewButton = el('button', {
@@ -918,6 +927,44 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   workflowGrid.append(workflowList, workflowEditor);
   workflowsPanel.append(workflowsHeader, workflowGrid);
+
+  const workflowModalOverlay = el('div', {
+    className: 'workflow-modal fixed inset-0 z-50 hidden items-center justify-center p-4',
+    attrs: { role: 'dialog', 'aria-modal': 'true', 'aria-hidden': 'true' },
+  });
+  const workflowModalPanel = el('div', {
+    className: 'workflow-modal-panel w-full max-w-xl max-h-[80vh] overflow-hidden rounded-lg flex flex-col',
+  });
+  const workflowModalAccent = el('div', { className: 'workflow-modal-accent h-0.5 w-full' });
+  const workflowModalContent = el('div', { className: 'flex-1 p-5 overflow-hidden flex flex-col' });
+  const workflowModalHeader = el('div', { className: 'flex items-start justify-between gap-4' });
+  const workflowModalTitle = el('div', { className: 'section-label', text: 'WORKFLOW' });
+  const workflowModalSubtitle = el('div', { className: 'data-label', text: '' });
+  workflowModalHeader.append(workflowModalTitle, workflowModalSubtitle);
+  const workflowModalBody = el('div', { className: 'mt-2 text-sm text-white/70' });
+  const workflowModalList = el('div', { className: 'mt-4 flex-1 overflow-auto space-y-2 pr-1' });
+  const workflowModalError = el('div', { className: 'mt-2 text-[10px] text-[var(--accent-red)] hidden' });
+  const workflowModalActions = el('div', { className: 'mt-5 flex items-center justify-end gap-2' });
+  const workflowModalCancelButton = el('button', {
+    className: 'cyber-btn px-3 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-white/60 uppercase',
+    text: 'CANCEL',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  const workflowModalConfirmButton = el('button', {
+    className: 'cyber-btn px-3 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-[var(--accent-teal)] uppercase',
+    text: 'RUN',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  workflowModalActions.append(workflowModalCancelButton, workflowModalConfirmButton);
+  workflowModalContent.append(
+    workflowModalHeader,
+    workflowModalBody,
+    workflowModalList,
+    workflowModalError,
+    workflowModalActions
+  );
+  workflowModalPanel.append(workflowModalAccent, workflowModalContent);
+  workflowModalOverlay.append(workflowModalPanel);
 
   const overviewTopLayout = el('div', {
     className: 'relative grid min-h-0 overflow-hidden overview-top-grid',
@@ -1050,7 +1097,12 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     text: 'SEND',
   }) as HTMLButtonElement;
 
-  chatInputWrap.append(inputIcon, chatInput, chatSendBtn);
+  const chatStopBtn = el('button', {
+    className: 'mr-1 cyber-btn hidden px-4 py-2 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.15em] text-[var(--accent-red)] uppercase',
+    text: 'STOP',
+  }) as HTMLButtonElement;
+
+  chatInputWrap.append(inputIcon, chatInput, chatSendBtn, chatStopBtn);
   chatInputRow.append(chatInputWrap);
 
   chatColumn.append(analysisPanel, chatHeader, chatBody, chatInputRow);
@@ -1202,7 +1254,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     explorerResizeHandle,
     chatResizeHandle
   );
-  app.append(bgEffects, topBar, body);
+  app.append(bgEffects, topBar, body, workflowModalOverlay);
   root.replaceChildren(app);
 
   return {
@@ -1254,6 +1306,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     chatEmptyState,
     chatInput,
     chatSendBtn,
+    chatStopBtn,
     sessionIdLabel,
     welcomePanel,
     overviewLayout,
@@ -1279,5 +1332,13 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     workflowSaveButton,
     workflowRunButton,
     workflowDeleteButton,
+    workflowModalOverlay,
+    workflowModalTitle,
+    workflowModalSubtitle,
+    workflowModalBody,
+    workflowModalList,
+    workflowModalError,
+    workflowModalCancelButton,
+    workflowModalConfirmButton,
   };
 }
