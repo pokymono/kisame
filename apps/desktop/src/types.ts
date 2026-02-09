@@ -21,8 +21,20 @@ export type AnalysisArtifact = {
     byte_count: number;
     evidence: { first_frame: number; last_frame: number; sample_frames: number[] };
     rule_flags?: string[];
+    protocols?: Array<{ chain: string; count: number }>;
   }>;
-  timeline: Array<{ ts: number; session_id: string; kind: string; summary: string; evidence_frame: number }>;
+  timeline: Array<{
+    ts: number;
+    session_id: string;
+    kind: string;
+    summary: string;
+    evidence_frame: number;
+    meta?: {
+      dns_name?: string;
+      sni?: string;
+      http?: { method?: string; host?: string | null; uri?: string | null };
+    };
+  }>;
 };
 
 export type ToolCallLog = {
