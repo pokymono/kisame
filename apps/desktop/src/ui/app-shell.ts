@@ -60,6 +60,8 @@ export type AppShellRefs = {
   sessionsPanel: HTMLElement;
   timelinePanel: HTMLElement;
   terminalPanel: HTMLElement;
+  terminalTabsContainer: HTMLElement;
+  terminalAddButton: HTMLButtonElement;
   terminalContainer: HTMLElement;
   sessionKeyPanel: HTMLElement;
   insightsPanel: HTMLElement;
