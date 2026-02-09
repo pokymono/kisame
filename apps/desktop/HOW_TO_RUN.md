@@ -12,9 +12,12 @@ Your Electron app is being set up with **Node.js 20.17.0 compatible versions**:
 
 ## 🎯 Steps to Run
 
-### 1. Wait for Installation to Complete
+### 1. Install Dependencies
 
-The `npm install` command is currently running. Wait for it to finish.
+```bash
+cd apps/desktop
+npm install
+```
 
 ### 2. Start the Development Server
 
@@ -72,6 +75,30 @@ npm run dev
 | `npm run dev`     | Start development mode   |
 | `npm run build`   | Build for production     |
 | `npm run preview` | Preview production build |
+
+## PCAP Analysis (Local)
+
+The Desktop UI’s **Open PCAP** button calls the local Python forensic engine (`services/forensic-engine/main.py`) via Electron IPC.
+
+Prerequisites:
+
+- `tshark` available on `PATH` (or `TSHARK_PATH` set)
+- Python 3.11+
+
+Optional env vars:
+
+- `KISAME_PYTHON` (default: `python3` on macOS/Linux, `python` on Windows)
+- `KISAME_MAX_PACKETS` (limit packets analyzed for faster iteration)
+- `KISAME_SKIP_HASH=0` to include SHA-256 (default skips for speed)
+
+Explanation service (optional):
+
+- Start `services/explanation-service` and the UI will use it automatically.
+- Override the URL with `VITE_EXPLANATION_URL` (defaults to `http://localhost:8787`).
+
+Desktop → Bun upload/analyze:
+
+- The desktop main process uploads the selected PCAP to Bun at `KISAME_BUN_URL` (defaults to `http://localhost:8787`) and calls `POST /tools/analyzePcap`.
 
 ## 🎨 Project Files
 
