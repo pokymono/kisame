@@ -97,14 +97,25 @@ function matchDomainValue(value: string | undefined, domain: string): boolean {
   return normalized.endsWith(`.${domain}`) || domain.endsWith(`.${normalized}`);
 }
 function resolvePcapSession(context?: ChatContext, overrideId?: string) {
-  const sessionId =
-    overrideId ?? (context?.artifact as { pcap?: { session_id?: string } } | undefined)?.pcap?.session_id;
-  if (!sessionId) {
+  const contextId = (context?.artifact as { pcap?: { session_id?: string } } | undefined)?.pcap?.session_id;
+  const resolve = (id?: string) => (id ? getSession(id) : undefined);
+
+  if (overrideId) {
+    const session = resolve(overrideId);
+    if (session) return { session };
+    if (contextId) {
+      const fallback = resolve(contextId);
+      if (fallback) return { session: fallback };
+    }
+    return { error: `Unknown pcap_session_id ${overrideId}.` };
+  }
+
+  if (!contextId) {
     return { error: 'No PCAP session id available. Re-open the capture or re-run analysis.' };
   }
-  const session = getSession(sessionId);
+  const session = resolve(contextId);
   if (!session) {
-    return { error: `Unknown pcap session_id ${sessionId}.` };
+    return { error: `Unknown pcap session_id ${contextId}.` };
   }
   return { session };
 }
