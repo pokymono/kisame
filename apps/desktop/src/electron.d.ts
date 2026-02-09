@@ -6,7 +6,7 @@ export interface ChatQueryResult {
 }
 
 export interface TerminalAPI {
-  create: (cols: number, rows: number) => Promise<{ success: boolean; id: string }>;
+  create: (cols: number, rows: number) => Promise<{ success: boolean; id: string; error?: string }>;
   write: (id: string, data: string) => Promise<void>;
   resize: (id: string, cols: number, rows: number) => Promise<void>;
   kill: (id: string) => Promise<void>;

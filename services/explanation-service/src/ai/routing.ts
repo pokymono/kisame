@@ -121,7 +121,7 @@ Routing guidance:
 - If user asks broad capture questions, prefer overview.
 - If no artifact, use summary.
 
-Plan actions (choose 1-3, or [] for summary):
+Plan actions (choose 1-4, or [] for summary):
 - overview (pcap_overview)
 - list_sessions (list_sessions)
 - session_details (get_session)
@@ -138,6 +138,9 @@ Plan actions (choose 1-3, or [] for summary):
 - follow_stream (pcap_follow_tcp_stream)
 
 Choose actions that match the selected route (e.g., stream -> list_streams/follow_stream, domain -> list_domains/domain_sessions).
+For "suspicious" or "analyze this PCAP" style requests:
+- If hasTcpSessions and totalTimelineEvents is low/zero, include list_streams and follow_stream.
+- If totalTimelineEvents is available, include timeline_search or timeline_range.
 Return route, confidence, reason, and next_actions.
 
 User query:
