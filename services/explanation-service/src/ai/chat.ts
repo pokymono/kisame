@@ -837,82 +837,93 @@ function createTools(context?: ChatContext) {
         const subdomainCount = Math.max(0, labels.length - 2);
 
         const signals: Array<{ signal: string; weight: number; detail: string }> = [];
-        let score = 10;
+        let score = 5;
 
         if (punycode) {
-          score += 15;
-          signals.push({ signal: 'punycode', weight: 15, detail: 'IDN/punycode label detected.' });
+          score += 12;
+          signals.push({ signal: 'punycode', weight: 12, detail: 'IDN/punycode label detected.' });
         }
 
         if (normalized.length > 30) {
-          score += 8;
-          signals.push({ signal: 'length', weight: 8, detail: 'Unusually long domain.' });
-        }
-
-        if (subdomainCount >= 3) {
           score += 5;
-          signals.push({ signal: 'subdomains', weight: 5, detail: 'Many subdomain levels.' });
+          signals.push({ signal: 'length', weight: 5, detail: 'Unusually long domain.' });
         }
 
-        if (digitRatio > 0.3) {
-          score += 10;
+        if (subdomainCount >= 4) {
+          score += 3;
+          signals.push({ signal: 'subdomains', weight: 3, detail: 'Many subdomain levels.' });
+        }
+
+        if (digitRatio > 0.4) {
+          score += 6;
           signals.push({
             signal: 'digit_ratio',
-            weight: 10,
+            weight: 6,
             detail: `High digit ratio in label (${(digitRatio * 100).toFixed(0)}%).`,
           });
         }
 
-        if (hyphenCount >= 2) {
-          score += 5;
-          signals.push({ signal: 'hyphens', weight: 5, detail: 'Multiple hyphens in label.' });
+        if (hyphenCount >= 3) {
+          score += 3;
+          signals.push({ signal: 'hyphens', weight: 3, detail: 'Multiple hyphens in label.' });
         }
 
-        if (entropy >= 4.0) {
-          score += 18;
-          signals.push({ signal: 'entropy', weight: 18, detail: 'Very high label entropy.' });
-        } else if (entropy >= 3.4) {
-          score += 12;
-          signals.push({ signal: 'entropy', weight: 12, detail: 'High label entropy.' });
+        if (entropy >= 4.2) {
+          score += 14;
+          signals.push({ signal: 'entropy', weight: 14, detail: 'Very high label entropy.' });
+        } else if (entropy >= 3.7) {
+          score += 8;
+          signals.push({ signal: 'entropy', weight: 8, detail: 'High label entropy.' });
         }
 
         if (tld && !COMMON_TLDS.has(tld)) {
-          score += 10;
-          signals.push({ signal: 'tld', weight: 10, detail: `Uncommon TLD .${tld}.` });
+          score += 6;
+          signals.push({ signal: 'tld', weight: 6, detail: `Uncommon TLD .${tld}.` });
         }
 
         if (totalObservations <= 1) {
-          score += 5;
-          signals.push({ signal: 'rare_observation', weight: 5, detail: 'Observed only once.' });
+          score += 3;
+          signals.push({ signal: 'rare_observation', weight: 3, detail: 'Observed only once.' });
+        } else if (totalObservations >= 20) {
+          score -= 6;
+          signals.push({
+            signal: 'common_observation',
+            weight: -6,
+            detail: 'Seen frequently in capture.',
+          });
         } else if (totalObservations >= 10) {
-          score -= 5;
-          signals.push({ signal: 'common_observation', weight: -5, detail: 'Seen frequently in capture.' });
+          score -= 3;
+          signals.push({
+            signal: 'common_observation',
+            weight: -3,
+            detail: 'Seen repeatedly in capture.',
+          });
         }
 
         if (counts.dns === 0 && counts.sni > 0) {
-          score += 8;
+          score += 5;
           signals.push({
             signal: 'no_dns',
-            weight: 8,
+            weight: 5,
             detail: 'Seen via TLS SNI but no matching DNS query in capture.',
           });
         }
 
         if (ruleFlags.size > 0) {
-          score += 12;
+          score += 10;
           signals.push({
             signal: 'rule_flags',
-            weight: 12,
+            weight: 10,
             detail: `Associated sessions flagged: ${Array.from(ruleFlags).join(', ')}.`,
           });
         }
 
         score = Math.max(0, Math.min(100, Math.round(score)));
-        const verdict = score >= 60 ? 'high' : score >= 35 ? 'medium' : 'low';
+        const verdict = score >= 75 ? 'high' : score >= 50 ? 'medium' : 'low';
         const confidence =
-          totalObservations >= 10 || sessionRows.length >= 3
+          totalObservations >= 15 || sessionRows.length >= 4
             ? 'high'
-            : totalObservations >= 3 || sessionRows.length >= 1
+            : totalObservations >= 5 || sessionRows.length >= 2
               ? 'medium'
               : 'low';
 
