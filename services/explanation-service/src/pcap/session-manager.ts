@@ -1,25 +1,14 @@
-/**
- * PCAP Session Manager
- * Handles PCAP storage and retrieval
- */
 import type { PcapSession } from '../types';
 import { ensureDir, getPcapDir } from '../utils/fs';
 import { utcNowIso } from '../utils/response';
 
-// In-memory session store
 const sessions = new Map<string, PcapSession>();
 
-/**
- * Initialize the PCAP storage directory
- */
 export async function initPcapStorage(): Promise<void> {
   const pcapDir = getPcapDir();
   await ensureDir(pcapDir);
 }
 
-/**
- * Store a new PCAP file and create a session
- */
 export async function storePcap(
   fileName: string,
   data: Uint8Array
@@ -43,16 +32,29 @@ export async function storePcap(
   return session;
 }
 
-/**
- * Get a session by ID
- */
+export async function registerPcapFile(opts: {
+  id?: string;
+  fileName: string;
+  filePath: string;
+  sizeBytes?: number;
+}): Promise<PcapSession> {
+  const id = opts.id ?? crypto.randomUUID();
+  const session: PcapSession = {
+    id,
+    fileName: opts.fileName,
+    filePath: opts.filePath,
+    createdAt: utcNowIso(),
+    sizeBytes: opts.sizeBytes ?? 0,
+  };
+
+  sessions.set(id, session);
+  return session;
+}
+
 export function getSession(id: string): PcapSession | undefined {
   return sessions.get(id);
 }
 
-/**
- * List all sessions
- */
 export function listSessions(): PcapSession[] {
   return Array.from(sessions.values());
 }

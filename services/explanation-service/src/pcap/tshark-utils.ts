@@ -1,7 +1,3 @@
-/**
- * TShark utilities for parsing PCAP fields
- */
-
 export function safeInt(v: string | undefined): number | null {
   if (!v) return null;
   const t = v.trim();
@@ -20,10 +16,8 @@ export function safeFloat(v: string | undefined): number | null {
 
 export function sha1Hex12(input: string): string {
   const bytes = new TextEncoder().encode(input);
-  // @ts-expect-error Bun supports crypto for sha1
   const hash = Bun.CryptoHasher ? new (Bun as any).CryptoHasher('sha1').update(bytes).digest('hex') : null;
   if (hash) return String(hash).slice(0, 12);
-  // Fallback: non-cryptographic but stable-ish (dev only)
   let acc = 0;
   for (const b of bytes) acc = (acc * 31 + b) >>> 0;
   return acc.toString(16).padStart(8, '0').slice(0, 8);

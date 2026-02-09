@@ -3,7 +3,8 @@ module.exports = {
   content: [
     "./index.html",
     "./renderer.js",
-    "./src/**/*.{html,js,ts}"
+    "./src/**/*.{html,js,ts}",
+    "./node_modules/streamdown/dist/**/*.js"
   ],
   theme: {
     extend: {

@@ -1,6 +1,3 @@
-/**
- * Session explainer - generates human-readable explanations for sessions
- */
 import type { AnalysisArtifact } from '../types';
 
 export type SessionExplanation = {
@@ -9,9 +6,6 @@ export type SessionExplanation = {
   evidence_frames: number[];
 };
 
-/**
- * Generate an explanation for a specific session
- */
 export function explainSession(artifact: AnalysisArtifact, sessionId: string): SessionExplanation {
   const session = artifact.sessions.find((s) => s.id === sessionId);
   if (!session) {
@@ -25,7 +19,7 @@ export function explainSession(artifact: AnalysisArtifact, sessionId: string): S
   );
   const timeline = artifact.timeline.filter((e) => e.session_id === sessionId).slice(0, 8);
   const preview = timeline.map((e) => `- ${new Date(e.ts * 1000).toISOString()} ${e.summary} (#${e.evidence_frame})`).join('\n');
-  const flags = session.rule_flags.length ? `Rule flags: ${session.rule_flags.join(', ')}.` : '';
+  const flags = session.rule_flags && session.rule_flags.length ? `Rule flags: ${session.rule_flags.join(', ')}.` : '';
 
   const text = [
     `Session ${session.id} (${session.transport.toUpperCase()}) observed between ${a} and ${b}.`,

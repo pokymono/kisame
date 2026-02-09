@@ -1,5 +1,3 @@
-// Type definitions for Electron API exposed via preload script
-
 export interface ChatQueryResult {
   query: string;
   response: string;

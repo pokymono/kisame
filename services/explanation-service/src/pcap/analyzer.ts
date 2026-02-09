@@ -1,33 +1,40 @@
-/**
- * TShark-based PCAP analyzer
- */
 import type { PcapSession, AnalysisArtifact } from '../types';
 import { utcNowIso } from '../utils/response';
 import { safeInt, safeFloat, sha1Hex12, canonicalPair } from './tshark-utils';
+import { resolveTsharkPath, tsharkVersion, getTsharkInfo as fetchTsharkInfo } from './tshark';
 
-/**
- * Get the TShark executable path
- */
-function resolveTsharkPath(): string {
-  const envPath = process.env.TSHARK_PATH;
-  if (envPath && envPath.trim()) return envPath.trim();
-  return 'tshark';
-}
 
-/**
- * Get TShark version
- */
-async function tsharkVersion(tsharkPath: string): Promise<string | null> {
-  try {
-    const proc = Bun.spawn([tsharkPath, '--version'], { stdout: 'pipe', stderr: 'pipe' });
-    const text = await new Response(proc.stdout).text();
-    await proc.exited;
-    const firstLine = text.split('\n')[0]?.trim();
-    return firstLine || null;
-  } catch {
-    return null;
+function parseTsvLine(line: string): string[] {
+  const values: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      const next = line[i + 1];
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === '\t' && !inQuotes) {
+      values.push(current);
+      current = '';
+      continue;
+    }
+
+    current += ch;
   }
+
+  values.push(current);
+  return values;
 }
+
 
 export type AnalyzeOptions = {
   session: PcapSession;
@@ -35,13 +42,15 @@ export type AnalyzeOptions = {
   sampleFramesPerSession?: number;
 };
 
-/**
- * Analyze a PCAP file using TShark
- */
 export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisArtifact> {
   const tsharkPath = resolveTsharkPath();
+  if (!tsharkPath) {
+    throw new Error(
+      'tshark was not found. Install Wireshark or set TSHARK_PATH to the tshark binary (macOS default: /Applications/Wireshark.app/Contents/MacOS/tshark).'
+    );
+  }
   const version = await tsharkVersion(tsharkPath);
-  const sampleFramesPerSession = opts.sampleFramesPerSession ?? 8;
+  const sampleFramesPerSession = Math.max(0, opts.sampleFramesPerSession ?? 8);
 
   const fields = [
     'frame.number',
@@ -111,13 +120,13 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
     };
   }
 
-  const header = lines[0].split('\t').map((h) => h.replaceAll('"', ''));
+  const headerLine = lines[0]!;
+  const header = parseTsvLine(headerLine).map((h) => h.trim());
   const idx = (name: string) => header.indexOf(name);
   const at = (row: string[], name: string) => {
     const i = idx(name);
     if (i < 0) return '';
-    const raw = row[i] ?? '';
-    return raw.startsWith('"') && raw.endsWith('"') ? raw.slice(1, -1) : raw;
+    return row[i] ?? '';
   };
 
   const sessionsMap = new Map<
@@ -154,7 +163,8 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
   let lastTs: number | null = null;
 
   for (let i = 1; i < lines.length; i++) {
-    const row = lines[i].split('\t');
+    const line = lines[i]!;
+    const row = parseTsvLine(line);
     const frameNo = safeInt(at(row, 'frame.number'));
     const ts = safeFloat(at(row, 'frame.time_epoch'));
     const frameLen = safeInt(at(row, 'frame.len'));
@@ -291,11 +301,11 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
   };
 }
 
-/**
- * Get TShark version info
- */
-export async function getTsharkInfo(): Promise<{ tshark_path: string; tshark_version: string | null }> {
-  const tsharkPath = resolveTsharkPath();
-  const version = await tsharkVersion(tsharkPath);
-  return { tshark_path: tsharkPath, tshark_version: version };
+
+export async function getTsharkInfo(): Promise<{
+  tshark_path: string | null;
+  tshark_version: string | null;
+  resolved: boolean;
+}> {
+  return fetchTsharkInfo();
 }

@@ -18,6 +18,8 @@
   "license": "MIT",
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "tailwindcss": "^4.0.0",
@@ -25,5 +27,15 @@
     "vite": "^6.0.0",
     "vite-plugin-electron": "^0.28.0",
     "vite-plugin-electron-renderer": "^0.14.0"
+  },
+  "dependencies": {
+    "@streamdown/cjk": "latest",
+    "@streamdown/code": "latest",
+    "@streamdown/math": "latest",
+    "@streamdown/mermaid": "latest",
+    "katex": "^0.16.11",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "streamdown": "^2.1.0"
   }
 }

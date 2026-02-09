@@ -1,9 +1,4 @@
-/**
- * Explanation Service - Main Entry Point
- * 
- * A modular Bun-based service for PCAP analysis and AI-powered chat.
- */
-import { json } from './utils/response';
+import { json, noContent } from './utils/response';
 import { initPcapStorage } from './pcap';
 import {
   handleHealth,
@@ -12,54 +7,74 @@ import {
   handlePcapGet,
   handleAnalyzePcap,
   handleExplainSession,
+  handleListCaptureInterfaces,
+  handleStartLiveCapture,
+  handleStopLiveCapture,
+  handleGetLiveCapture,
   handleChat,
+  handleChatStream,
 } from './routes';
 
-// Initialize storage
 await initPcapStorage();
 
 const port = Number(process.env.PORT ?? 8787);
+const idleTimeout = Number(process.env.IDLE_TIMEOUT ?? 120);
 
-/**
- * Main request router
- */
 async function handleRequest(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const { pathname } = url;
   const method = req.method;
 
-  // Health check
+  if (method === 'OPTIONS') {
+    return noContent();
+  }
+
   if (method === 'GET' && pathname === '/health') {
     return handleHealth(port);
   }
 
-  // TShark version
   if (method === 'GET' && pathname === '/tshark/version') {
     return handleTsharkVersion();
   }
 
-  // PCAP upload
   if (method === 'POST' && pathname === '/pcap') {
     return handlePcapUpload(req);
   }
 
-  // PCAP get session
+  if (method === 'GET' && pathname === '/capture/interfaces') {
+    return handleListCaptureInterfaces();
+  }
+
+  if (method === 'POST' && pathname === '/capture/start') {
+    return handleStartLiveCapture(req);
+  }
+
+  if (method === 'POST' && pathname === '/capture/stop') {
+    return handleStopLiveCapture(req);
+  }
+
+  if (method === 'GET' && pathname.startsWith('/capture/')) {
+    const id = pathname.split('/')[2] || '';
+    return handleGetLiveCapture(id);
+  }
+
   if (method === 'GET' && pathname.startsWith('/pcap/')) {
     const id = pathname.split('/')[2] || '';
     return handlePcapGet(id);
   }
 
-  // Analyze PCAP
   if (method === 'POST' && pathname === '/tools/analyzePcap') {
     return handleAnalyzePcap(req);
   }
 
-  // Explain session
   if (method === 'POST' && pathname === '/explain/session') {
     return handleExplainSession(req);
   }
 
-  // Chat endpoint
+  if (method === 'POST' && pathname === '/chat/stream') {
+    return handleChatStream(req);
+  }
+
   if (method === 'POST' && pathname === '/chat') {
     return handleChat(req);
   }
@@ -67,10 +82,10 @@ async function handleRequest(req: Request): Promise<Response> {
   return json({ error: 'Not found' }, { status: 404 });
 }
 
-// Start server
 Bun.serve({
   port,
   fetch: handleRequest,
+  idleTimeout,
 });
 
 console.log(`explanation-service listening on http://localhost:${port}`);
