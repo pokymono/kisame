@@ -6,12 +6,12 @@ export interface ChatQueryResult {
 }
 
 export interface TerminalAPI {
-  create: (cols: number, rows: number) => Promise<{ success: boolean }>;
-  write: (data: string) => Promise<void>;
-  resize: (cols: number, rows: number) => Promise<void>;
-  kill: () => Promise<void>;
-  onData: (handler: (data: string) => void) => () => void;
-  onExit: (handler: (exitCode: number) => void) => () => void;
+  create: (cols: number, rows: number) => Promise<{ success: boolean; id: string }>;
+  write: (id: string, data: string) => Promise<void>;
+  resize: (id: string, cols: number, rows: number) => Promise<void>;
+  kill: (id: string) => Promise<void>;
+  onData: (handler: (id: string, data: string) => void) => () => void;
+  onExit: (handler: (id: string, exitCode: number) => void) => () => void;
 }
 
 export interface ElectronAPI {
