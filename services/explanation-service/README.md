@@ -27,6 +27,15 @@ bun run start
 | `CORS_ORIGIN`     | CORS allow origin          | `*`       |
 | `IDLE_TIMEOUT`    | Bun idle timeout (seconds) | `120`     |
 
+### Windows notes
+
+Install [Wireshark](https://wireshark.org) which includes tshark. Common paths:
+
+- `C:\Program Files\Wireshark\tshark.exe`
+- `C:\Program Files (x86)\Wireshark\tshark.exe`
+
+The service will auto-detect these paths, or you can set `TSHARK_PATH`.
+
 ### macOS notes
 
 If Wireshark is installed via the app bundle, `tshark` is usually here:
