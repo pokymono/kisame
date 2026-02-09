@@ -89,38 +89,26 @@ export function iconShark(): SVGSVGElement {
     className: 'size-4',
     attrs: { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.5' },
     children: [
-      // Shark body silhouette
       svgEl('path', {
         attrs: {
-          d: 'M2 14c1-3 4-6 8-6h2c4 0 7 2 10 5-2 1-4 3-6 3H8c-3 0-5-1-6-2z',
-          'stroke-linejoin': 'round',
-          fill: 'currentColor',
-          'fill-opacity': '0.1',
-        },
-      }),
-      // Dorsal fin
-      svgEl('path', {
-        attrs: {
-          d: 'M10 8V4l4 4',
+          d: 'M2 18h20',
           'stroke-linecap': 'round',
-          'stroke-linejoin': 'round',
+          'stroke-opacity': '0.4',
         },
       }),
-      // Tail
       svgEl('path', {
         attrs: {
-          d: 'M20 14l2-3v6l-2-3',
-          'stroke-linecap': 'round',
+          d: 'M4 18C6 14 8 10 12 6c1 4 3 8 8 12H4Z',
+          fill: 'currentColor',
+          'fill-opacity': '0.12',
           'stroke-linejoin': 'round',
         },
       }),
-      // Eye
-      svgEl('circle', {
+      svgEl('path', {
         attrs: {
-          cx: '6',
-          cy: '12',
-          r: '1',
-          fill: 'currentColor',
+          d: 'M11 12c0 2 1 4 3 6',
+          'stroke-linecap': 'round',
+          'stroke-opacity': '0.5',
         },
       }),
     ],
