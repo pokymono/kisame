@@ -2,7 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { spawn } from 'child_process';
 import { existsSync, readFileSync, createReadStream } from 'fs';
 import { stat } from 'fs/promises';
-import { ReadableStream } from 'stream/web';
+import { Readable } from 'stream';
+import { TransformStream } from 'stream/web';
 import * as path from 'path';
 
 type OpenPcapAndAnalyzeResult =
@@ -153,29 +154,24 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
     sendUploadProgress(win, { stage: 'upload', loaded: 0, total, percent: 0 });
 
     const fileStream = createReadStream(pcapPath);
-    const uploadStream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        fileStream.on('data', (chunk: string | Buffer) => {
-          const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
-          loaded += buffer.length;
-          controller.enqueue(new Uint8Array(buffer));
-          const now = Date.now();
-          if (now - lastEmit > 80 || loaded === total) {
-            lastEmit = now;
-            const percent = total ? Math.round((loaded / total) * 100) : undefined;
-            sendUploadProgress(win, { stage: 'upload', loaded, total, percent });
-          }
-        });
-        fileStream.on('end', () => {
-          controller.close();
-          sendUploadProgress(win, { stage: 'upload', loaded: total, total, percent: 100 });
-        });
-        fileStream.on('error', (err) => controller.error(err));
+    const webStream = Readable.toWeb(fileStream);
+    const progressStream = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        const buffer = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+        loaded += buffer.byteLength;
+        const now = Date.now();
+        if (now - lastEmit > 80 || loaded === total) {
+          lastEmit = now;
+          const percent = total ? Math.round((loaded / total) * 100) : undefined;
+          sendUploadProgress(win, { stage: 'upload', loaded, total, percent });
+        }
+        controller.enqueue(buffer);
       },
-      cancel() {
-        fileStream.destroy();
+      flush() {
+        sendUploadProgress(win, { stage: 'upload', loaded: total, total, percent: 100 });
       },
     });
+    const uploadStream = webStream.pipeThrough(progressStream);
 
     const uploadRes = await fetch(`${bunUrl}/pcap`, {
       method: 'POST',
@@ -183,7 +179,7 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
         'content-type': 'application/octet-stream',
         'x-filename': path.basename(pcapPath),
       },
-      body: uploadStream as unknown as ReadableStream,
+      body: uploadStream,
       // Required for streaming request bodies in Node/Electron fetch.
       duplex: 'half',
     } as RequestInit & { duplex: 'half' });
