@@ -14,6 +14,34 @@ function initApp() {
   let selectedSessionId: string | null = null;
   let liveCaptureId: string | null = null;
   let liveCaptureInterface: string | null = null;
+  let lastAnalysisRef: AnalysisArtifact | null = null;
+
+  type AppTab = 'capture' | 'analyze' | 'export';
+  let activeTab: AppTab = 'analyze';
+
+  const tabButtonBase =
+    'px-3 py-1 text-[10px] font-[var(--font-display)] tracking-[0.2em] transition-all rounded';
+  const tabActiveClass =
+    `${tabButtonBase} text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/30`;
+  const tabInactiveClass = `${tabButtonBase} text-white/50 hover:text-white/80`;
+
+  function setTabButtonState(button: HTMLButtonElement, isActive: boolean) {
+    button.className = isActive ? tabActiveClass : tabInactiveClass;
+  }
+
+  function setActiveTab(tab: AppTab) {
+    activeTab = tab;
+    setTabButtonState(ui.navCaptureButton, tab === 'capture');
+    setTabButtonState(ui.navAnalyzeButton, tab === 'analyze');
+    setTabButtonState(ui.navExportButton, tab === 'export');
+
+    const showAnalysis = tab === 'analyze';
+    ui.centerTop.classList.toggle('hidden', !showAnalysis);
+    ui.evidenceRow.classList.toggle('hidden', !showAnalysis);
+    ui.chatColumn.classList.toggle('hidden', !showAnalysis);
+    ui.capturePanel.classList.toggle('hidden', tab !== 'capture');
+    ui.exportPanel.classList.toggle('hidden', tab !== 'export');
+  }
 
   const explanationBaseUrl =
     ((import.meta as any).env?.VITE_EXPLANATION_URL as string | undefined) ??
@@ -26,6 +54,8 @@ function initApp() {
     emptyState: ui.chatEmptyState,
     scrollThreshold: 80,
   });
+
+  const sessionElements = new Map<string, HTMLElement>();
 
   const formatTimestamp = (ts?: number | null) => {
     if (!ts) return '—';
@@ -85,6 +115,8 @@ function initApp() {
     ui.analysisSummary.replaceChildren();
     setAnalysisDetail('');
     ui.evidenceList.replaceChildren();
+    sessionElements.clear();
+    lastAnalysisRef = null;
     setWelcomeVisible(true);
   }
 
@@ -93,6 +125,7 @@ function initApp() {
     ui.liveCaptureButton.disabled = true;
     ui.openPcapButton.disabled = true;
     ui.liveCaptureButton.textContent = 'Starting…';
+    ui.liveCaptureStatus.textContent = 'STARTING…';
 
     try {
       const preferredInterface =
@@ -117,10 +150,12 @@ function initApp() {
       liveCaptureInterface = data.interface?.name ?? data.interface?.id ?? 'interface';
       ui.captureBadge.textContent = `Live: ${liveCaptureInterface}`;
       ui.liveCaptureButton.textContent = 'Stop Capture';
+      ui.liveCaptureStatus.textContent = `CAPTURING ON ${liveCaptureInterface.toUpperCase()}`;
     } catch (err) {
       ui.liveCaptureButton.textContent = 'Live Capture';
       ui.openPcapButton.disabled = false;
       ui.liveCaptureButton.disabled = false;
+      ui.liveCaptureStatus.textContent = 'READY';
       alert((err as Error).message ?? String(err));
       return;
     }
@@ -134,6 +169,7 @@ function initApp() {
     let stoppedOk = false;
     ui.liveCaptureButton.disabled = true;
     ui.liveCaptureButton.textContent = 'Stopping…';
+    ui.liveCaptureStatus.textContent = 'STOPPING…';
 
     try {
       const stopRes = await fetch(`${explanationBaseUrl}/capture/stop`, {
@@ -163,10 +199,12 @@ function initApp() {
       selectedSessionId = null;
       stoppedOk = true;
       render();
+      setActiveTab('analyze');
     } catch (err) {
       ui.captureBadge.textContent = liveCaptureInterface
         ? `Live: ${liveCaptureInterface}`
         : 'Live capture';
+      ui.liveCaptureStatus.textContent = 'READY';
       alert((err as Error).message ?? String(err));
       liveCaptureId = null;
       liveCaptureInterface = null;
@@ -177,20 +215,17 @@ function initApp() {
       if (stoppedOk) {
         liveCaptureId = null;
         liveCaptureInterface = null;
+        ui.liveCaptureStatus.textContent = 'READY';
       }
     }
   }
 
   function renderSessions(sessions: AnalysisArtifact['sessions']) {
+    sessionElements.clear();
     ui.sessionsList.replaceChildren(
       ...sessions.map((session, index) => {
-        const selected = session.id === selectedSessionId;
         const item = el('button', {
-          className:
-            'w-full rounded px-3 py-3 text-left transition-all data-card ' +
-            (selected
-              ? 'selected'
-              : ''),
+          className: 'w-full rounded px-3 py-3 text-left transition-all data-card',
           attrs: { 'data-session-id': session.id, type: 'button', style: `animation-delay: ${index * 0.05}s` },
         });
         item.classList.add('animate-slide-in');
@@ -239,9 +274,16 @@ function initApp() {
         }
 
         item.append(header, endpoints, meta);
+        sessionElements.set(session.id, item);
         return item;
       })
     );
+  }
+
+  function updateSessionSelection() {
+    for (const [id, element] of sessionElements) {
+      element.classList.toggle('selected', id === selectedSessionId);
+    }
   }
 
   function renderTimeline(timeline: AnalysisArtifact['timeline']) {
@@ -371,22 +413,13 @@ function initApp() {
     );
   }
 
-  function render() {
-    if (!analysis || !analysis.sessions.length) {
-      renderEmptyState();
-      return;
-    }
-
-    setWelcomeVisible(false);
-
-    ui.captureBadge.textContent = analysis.pcap?.file_name
-      ? `${analysis.pcap.file_name} (${analysis.pcap.packets_analyzed ?? 0} pkts)`
-      : 'Capture loaded';
+  function updateSelectedSessionUI() {
+    if (!analysis || !analysis.sessions.length) return;
 
     const sessions = analysis.sessions;
-    if (!selectedSessionId && sessions.length > 0) selectedSessionId = sessions[0].id;
+    if (!selectedSessionId) selectedSessionId = sessions[0].id;
 
-    renderSessions(sessions);
+    updateSessionSelection();
 
     const selected = sessions.find((s) => s.id === selectedSessionId) ?? sessions[0];
     ui.sessionIdLabel.textContent = `Session: ${selected.id}`;
@@ -399,13 +432,34 @@ function initApp() {
     void updateExplanationFromService(selected.id);
   }
 
+  function render() {
+    if (!analysis || !analysis.sessions.length) {
+      renderEmptyState();
+      return;
+    }
+
+    setWelcomeVisible(false);
+
+    ui.captureBadge.textContent = analysis.pcap?.file_name
+      ? `${analysis.pcap.file_name} (${analysis.pcap.packets_analyzed ?? 0} pkts)`
+      : 'Capture loaded';
+
+    if (analysis !== lastAnalysisRef) {
+      renderSessions(analysis.sessions);
+      lastAnalysisRef = analysis;
+    }
+
+    updateSelectedSessionUI();
+  }
+
   ui.sessionsList.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
     const row = target?.closest('[data-session-id]') as HTMLElement | null;
     const id = row?.getAttribute('data-session-id');
     if (!id) return;
+    if (id === selectedSessionId) return;
     selectedSessionId = id;
-    render();
+    updateSelectedSessionUI();
   });
 
   ui.openPcapButton.addEventListener('click', async () => {
@@ -419,6 +473,7 @@ function initApp() {
       analysis = result.analysis as AnalysisArtifact;
       selectedSessionId = null;
       render();
+      setActiveTab('analyze');
     } catch (err) {
       console.error(err);
       alert((err as Error).message ?? String(err));
@@ -578,6 +633,11 @@ function initApp() {
     }
   });
 
+  ui.navCaptureButton.addEventListener('click', () => setActiveTab('capture'));
+  ui.navAnalyzeButton.addEventListener('click', () => setActiveTab('analyze'));
+  ui.navExportButton.addEventListener('click', () => setActiveTab('export'));
+
+  setActiveTab(activeTab);
   render();
 }
 
