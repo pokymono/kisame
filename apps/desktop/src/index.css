@@ -572,6 +572,10 @@
   grid-template-columns: var(--sessions-w) minmax(0, 1fr);
 }
 
+.workflow-grid {
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
 .resize-handle {
   touch-action: none;
 }
@@ -610,6 +614,11 @@
   .overview-top-grid .resize-handle,
   .sessions-top-grid .resize-handle {
     display: none !important;
+  }
+
+  .workflow-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 }
 
