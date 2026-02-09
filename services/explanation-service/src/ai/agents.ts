@@ -3,7 +3,7 @@ import { openai } from '@ai-sdk/openai';
 import type { ChatContext } from '../types';
 import { buildSystemPrompt } from './prompt';
 import { createTools } from './tools';
-import type { RouteName } from './routing';
+import type { RouteName, RouterPlanAction } from './routing';
 
 type ToolSet = ReturnType<typeof createTools>;
 type ToolName = keyof ToolSet;
@@ -33,6 +33,32 @@ const ROUTE_SCOPES: Record<RouteName, string> = {
   summary: 'Scope: Narrative summary without tool usage.',
 };
 
+const DEFAULT_ROUTE_PLANS: Record<RouteName, RouterPlanAction[]> = {
+  overview: ['overview', 'list_sessions'],
+  session: ['session_details', 'evidence_frames'],
+  timeline: ['timeline_search'],
+  domain: ['list_domains', 'domain_sessions'],
+  stream: ['list_streams', 'follow_stream'],
+  summary: [],
+};
+
+const ACTION_TOOLS: Record<RouterPlanAction, readonly ToolName[]> = {
+  overview: ['pcap_overview'],
+  list_sessions: ['list_sessions'],
+  session_details: ['get_session'],
+  evidence_frames: ['get_evidence_frames'],
+  search_capture: ['pcap_search'],
+  timeline_search: ['search_timeline'],
+  timeline_range: ['pcap_timeline_range'],
+  event_kinds: ['pcap_event_kinds'],
+  list_domains: ['pcap_domains'],
+  session_domains: ['pcap_session_domains'],
+  domain_sessions: ['pcap_domain_sessions'],
+  risk_assess: ['domain_risk_assess'],
+  list_streams: ['pcap_tcp_streams'],
+  follow_stream: ['pcap_follow_tcp_stream'],
+};
+
 function pickTools<T extends Record<string, any>>(tools: T, names: readonly (keyof T)[]): Partial<T> {
   const out: Partial<T> = {};
   for (const name of names) {
@@ -47,12 +73,20 @@ function createSpecialistAgent(
   route: RouteName,
   context: ChatContext | undefined,
   tools: ToolSet,
-  toolNames: readonly ToolName[]
+  toolNames: readonly ToolName[],
+  planActions?: RouterPlanAction[]
 ): ToolLoopAgent {
   const modelName = process.env.OPENAI_MODEL ?? 'gpt-5.2';
   const scopedTools = pickTools(tools, toolNames);
   const activeToolNames = Object.keys(scopedTools) as Array<keyof typeof scopedTools>;
   const forceToolFirstStep = Boolean(context?.artifact && activeToolNames.length > 0);
+  const requestedPlan = (planActions && planActions.length ? planActions : DEFAULT_ROUTE_PLANS[route]).filter(
+    (action): action is RouterPlanAction => Boolean(action)
+  );
+  const filteredPlan = requestedPlan.filter((action) =>
+    ACTION_TOOLS[action].some((tool) => tool in scopedTools)
+  );
+  const resolvedPlan = filteredPlan.length ? filteredPlan : DEFAULT_ROUTE_PLANS[route];
 
   return new ToolLoopAgent({
     id: `kisame-${route}-agent`,
@@ -65,6 +99,17 @@ function createSpecialistAgent(
       if (!context?.artifact || activeToolNames.length === 0) {
         return { activeTools: [] };
       }
+      const planStepIndex = steps.filter((step) => (step.toolCalls?.length ?? 0) > 0).length;
+      const plannedAction = resolvedPlan[planStepIndex];
+      if (plannedAction) {
+        const plannedTools = ACTION_TOOLS[plannedAction].filter((tool) => tool in scopedTools);
+        if (plannedTools.length) {
+          return {
+            activeTools: plannedTools,
+            toolChoice: 'required',
+          };
+        }
+      }
       return {
         activeTools: activeToolNames,
         toolChoice: stepNumber === 0 && steps.length === 0 && forceToolFirstStep ? 'required' : 'auto',
@@ -73,7 +118,10 @@ function createSpecialistAgent(
   });
 }
 
-export function createSpecialistAgents(context?: ChatContext): {
+export function createSpecialistAgents(
+  context?: ChatContext,
+  plans?: Partial<Record<RouteName, RouterPlanAction[]>>
+): {
   tools: ToolSet;
   agents: Record<RouteName, ToolLoopAgent>;
 } {
@@ -82,12 +130,12 @@ export function createSpecialistAgents(context?: ChatContext): {
   return {
     tools,
     agents: {
-      overview: createSpecialistAgent('overview', context, tools, TOOL_GROUPS.overview),
-      session: createSpecialistAgent('session', context, tools, TOOL_GROUPS.session),
-      timeline: createSpecialistAgent('timeline', context, tools, TOOL_GROUPS.timeline),
-      domain: createSpecialistAgent('domain', context, tools, TOOL_GROUPS.domain),
-      stream: createSpecialistAgent('stream', context, tools, TOOL_GROUPS.stream),
-      summary: createSpecialistAgent('summary', context, tools, TOOL_GROUPS.summary),
+      overview: createSpecialistAgent('overview', context, tools, TOOL_GROUPS.overview, plans?.overview),
+      session: createSpecialistAgent('session', context, tools, TOOL_GROUPS.session, plans?.session),
+      timeline: createSpecialistAgent('timeline', context, tools, TOOL_GROUPS.timeline, plans?.timeline),
+      domain: createSpecialistAgent('domain', context, tools, TOOL_GROUPS.domain, plans?.domain),
+      stream: createSpecialistAgent('stream', context, tools, TOOL_GROUPS.stream, plans?.stream),
+      summary: createSpecialistAgent('summary', context, tools, TOOL_GROUPS.summary, plans?.summary),
     },
   };
 }

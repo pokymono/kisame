@@ -7,10 +7,27 @@ import { isDomainLike, isGlobalQuestion, normalizeSearchTerms } from './query-ut
 
 export type RouteName = 'overview' | 'session' | 'timeline' | 'domain' | 'stream' | 'summary';
 
+export type RouterPlanAction =
+  | 'overview'
+  | 'list_sessions'
+  | 'session_details'
+  | 'evidence_frames'
+  | 'search_capture'
+  | 'timeline_search'
+  | 'timeline_range'
+  | 'event_kinds'
+  | 'list_domains'
+  | 'session_domains'
+  | 'domain_sessions'
+  | 'risk_assess'
+  | 'list_streams'
+  | 'follow_stream';
+
 export type RouteDecision = {
   route: RouteName;
   reason: string;
   confidence: 'low' | 'medium' | 'high';
+  next_actions: RouterPlanAction[];
 };
 
 type RoutingSignals = {
@@ -44,29 +61,37 @@ function getRoutingSignals(context?: ChatContext): RoutingSignals {
   };
 }
 
-function streamIntent(query: string): boolean {
-  return /\b(tcp stream|data stream|follow.+stream|payload|raw tcp|netcat|nc|shell|command|useradd|adduser|shadow|rogue|suspicious|malicious|backdoor)\b/i.test(
-    query
-  );
-}
-
 export async function routeQuery(query: string, context?: ChatContext): Promise<RouteDecision> {
   const modelName = process.env.OPENAI_ROUTER_MODEL ?? process.env.OPENAI_MODEL ?? 'gpt-5.2';
   const model = openai(modelName);
   const signals = getRoutingSignals(context);
-  const tokens = normalizeSearchTerms([query]);
-  const domainToken = tokens.find(isDomainLike) ?? null;
-  const global = isGlobalQuestion(query);
-  const streamy = streamIntent(query);
 
   if (!signals.hasArtifact) {
-    return { route: 'summary', reason: 'No capture context available.', confidence: 'high' };
+    return { route: 'summary', reason: 'No capture context available.', confidence: 'high', next_actions: [] };
   }
+
+  const actionSchema = z.enum([
+    'overview',
+    'list_sessions',
+    'session_details',
+    'evidence_frames',
+    'search_capture',
+    'timeline_search',
+    'timeline_range',
+    'event_kinds',
+    'list_domains',
+    'session_domains',
+    'domain_sessions',
+    'risk_assess',
+    'list_streams',
+    'follow_stream',
+  ]);
 
   const schema = z.object({
     route: z.enum(['overview', 'session', 'timeline', 'domain', 'stream', 'summary']),
     reason: z.string(),
     confidence: z.enum(['low', 'medium', 'high']),
+    next_actions: z.array(actionSchema),
   });
 
   const prompt = `You are a router for a network forensics assistant.
@@ -87,20 +112,33 @@ Signals:
 - totalSessions: ${signals.totalSessions}
 - totalTimelineEvents: ${signals.totalTimelineEvents}
 - hasTcpSessions: ${signals.hasTcpSessions}
-- globalQuestion: ${global}
-- domainToken: ${domainToken ?? 'none'}
-- streamIntent: ${streamy}
 
 Routing guidance:
-- If domainToken is present, prefer domain.
-- If streamIntent is true, prefer stream.
-- If hasTcpSessions is false, avoid stream.
+- If the query is about domains/hosts/DNS/SNI/HTTP hosts, prefer domain.
+- If the query is about raw TCP payloads, shell commands, or "follow stream", prefer stream.
 - If user asks about timeline/events/search/time range, prefer timeline.
 - If user asks about specific session or evidence frames, prefer session.
 - If user asks broad capture questions, prefer overview.
 - If no artifact, use summary.
 
-Return route, confidence, and a short reason.
+Plan actions (choose 1-3, or [] for summary):
+- overview (pcap_overview)
+- list_sessions (list_sessions)
+- session_details (get_session)
+- evidence_frames (get_evidence_frames)
+- search_capture (pcap_search)
+- timeline_search (search_timeline)
+- timeline_range (pcap_timeline_range)
+- event_kinds (pcap_event_kinds)
+- list_domains (pcap_domains)
+- session_domains (pcap_session_domains)
+- domain_sessions (pcap_domain_sessions)
+- risk_assess (domain_risk_assess)
+- list_streams (pcap_tcp_streams)
+- follow_stream (pcap_follow_tcp_stream)
+
+Choose actions that match the selected route (e.g., stream -> list_streams/follow_stream, domain -> list_domains/domain_sessions).
+Return route, confidence, reason, and next_actions.
 
 User query:
 ${query}`;
@@ -115,40 +153,62 @@ ${query}`;
     });
 
     if (!output?.route) {
-      return { route: signals.hasArtifact ? 'overview' : 'summary', reason: 'Defaulted route.', confidence: 'low' };
+      return {
+        route: signals.hasArtifact ? 'overview' : 'summary',
+        reason: 'Defaulted route.',
+        confidence: 'low',
+        next_actions: [],
+      };
     }
-    return output;
+    return {
+      route: output.route,
+      reason: output.reason,
+      confidence: output.confidence,
+      next_actions: output.next_actions ?? [],
+    };
   } catch (error) {
     logWarn('ai.route.error', { error: toErrorMeta(error) });
-    return { route: signals.hasArtifact ? 'overview' : 'summary', reason: 'Routing failed.', confidence: 'low' };
+    return {
+      route: signals.hasArtifact ? 'overview' : 'summary',
+      reason: 'Routing failed.',
+      confidence: 'low',
+      next_actions: [],
+    };
   }
 }
 
-export function buildRoutedPrompt(query: string, route: RouteName, context?: ChatContext): string {
+export function buildRoutedPrompt(
+  query: string,
+  route: RouteName,
+  context?: ChatContext,
+  plan?: RouterPlanAction[]
+): string {
   const tokens = normalizeSearchTerms([query]);
   const domainToken = tokens.find(isDomainLike);
   const global = isGlobalQuestion(query);
+  const planLine = plan?.length
+    ? `Tool plan: ${plan.join(' -> ')}. Use tools in this order before answering.`
+    : '';
 
   if (route === 'domain') {
-    const preface = domainToken
+    const focus = domainToken
       ? global
-        ? `Before answering, use pcap_domain_sessions for domain "${domainToken}" to locate sessions across the capture.`
-        : `Before answering, use pcap_session_domains or pcap_domain_sessions to ground domain "${domainToken}".`
-      : 'Before answering, use pcap_domains to list capture domains, then drill into the relevant domain with pcap_domain_sessions.';
-    return `${preface}\n\nUser question: ${query}`;
+        ? `Focus on domain "${domainToken}" across the capture.`
+        : `Focus on domain "${domainToken}".`
+      : 'Focus on the domain(s) implied by the query.';
+    return [planLine, focus, `User question: ${query}`].filter(Boolean).join('\n\n');
   }
 
   if (route === 'stream') {
-    const preface =
-      'Before answering, use pcap_tcp_streams to list TCP streams and pcap_follow_tcp_stream to reconstruct raw payloads (Follow TCP Stream).';
-    return `${preface}\n\nUser question: ${query}`;
+    const preface = 'Use raw TCP payload reconstruction (Follow TCP Stream) before answering.';
+    return [planLine, preface, `User question: ${query}`].filter(Boolean).join('\n\n');
   }
 
   if (route === 'overview' && global && context?.artifact) {
     const preface =
       'Before answering, use pcap_search or pcap_domains to check the entire capture (not just one session).';
-    return `${preface}\n\nUser question: ${query}`;
+    return [planLine, preface, `User question: ${query}`].filter(Boolean).join('\n\n');
   }
 
-  return query;
+  return [planLine, query].filter(Boolean).join('\n\n');
 }

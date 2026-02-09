@@ -170,18 +170,19 @@ export async function processChat(
   }
 
   try {
-    const { agents } = createSpecialistAgents(context);
     const decision = context?.artifact
       ? await routeQuery(query, context)
-      : { route: 'summary' as RouteName, reason: 'No artifact.', confidence: 'low' as const };
+      : { route: 'summary' as RouteName, reason: 'No artifact.', confidence: 'low' as const, next_actions: [] };
+    const { agents } = createSpecialistAgents(context, { [decision.route]: decision.next_actions });
     const agent = agents[decision.route] ?? agents.overview;
-    const promptToSend = buildRoutedPrompt(query, decision.route, context);
+    const promptToSend = buildRoutedPrompt(query, decision.route, context, decision.next_actions);
 
     logInfo('ai.chat.route', {
       session_id: context?.session_id ?? null,
       route: decision.route,
       confidence: decision.confidence,
       reason: decision.reason,
+      next_actions: decision.next_actions,
     });
 
     const result = await agent.generate({
@@ -266,12 +267,12 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
       }
 
       try {
-        const { agents } = createSpecialistAgents(context);
         const decision = context?.artifact
           ? await routeQuery(query, context)
-          : { route: 'summary' as RouteName, reason: 'No artifact.', confidence: 'low' as const };
+          : { route: 'summary' as RouteName, reason: 'No artifact.', confidence: 'low' as const, next_actions: [] };
+        const { agents } = createSpecialistAgents(context, { [decision.route]: decision.next_actions });
         const agent = agents[decision.route] ?? agents.overview;
-        const promptToSend = buildRoutedPrompt(query, decision.route, context);
+        const promptToSend = buildRoutedPrompt(query, decision.route, context, decision.next_actions);
         let stepCount = 0;
 
         logInfo('ai.stream.route', {
@@ -279,6 +280,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
           route: decision.route,
           confidence: decision.confidence,
           reason: decision.reason,
+          next_actions: decision.next_actions,
         });
 
         sendEvent(controller, {
@@ -286,6 +288,13 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
           stage: 'route',
           message: `Routing to ${decision.route} (${decision.confidence})`,
         });
+        if (decision.next_actions.length) {
+          sendEvent(controller, {
+            type: 'status',
+            stage: 'plan',
+            message: `Plan: ${decision.next_actions.join(' -> ')}`,
+          });
+        }
 
         const result = await agent.stream({
           prompt: promptToSend,
