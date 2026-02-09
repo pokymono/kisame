@@ -39,6 +39,7 @@ Tool usage policy:
 - If the user asks about a specific session and none is selected, request a session id or use tools to list sessions.
 - Prefer concise tool queries and summarize tool outputs in plain language.
 - When context is available, start with 'pcap_overview' or 'list_sessions' to ground the response before interpreting activity.
+- If the question is about the entire capture (e.g., "was YouTube opened", "any vtop traffic"), use 'pcap_search' across all sessions. Do not limit to the selected session unless explicitly asked.
 
 Response format:
 - Start with a short 2–4 sentence summary.
@@ -222,6 +223,54 @@ function createTools(context?: ChatContext) {
         };
       },
     }),
+    pcap_search: tool({
+      description:
+        'Search across all sessions in the PCAP timeline for one or more terms. Use for capture-wide questions.',
+      inputSchema: z.object({
+        terms: z.array(z.string().min(1)).min(1).describe('Search terms (e.g., ["youtube", "vtop"])'),
+        mode: z.enum(['any', 'all']).optional().describe('Match any or all terms. Default: any.'),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      execute: async ({ terms, mode, limit }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        const normalized = terms.map((term) => term.trim().toLowerCase()).filter(Boolean);
+        if (normalized.length === 0) {
+          return { error: 'No valid search terms provided.' };
+        }
+        const events = artifact.timeline ?? [];
+        const matches = events.filter((event) => {
+          const text = event.summary.toLowerCase();
+          if (mode === 'all') {
+            return normalized.every((term) => text.includes(term));
+          }
+          return normalized.some((term) => text.includes(term));
+        });
+
+        const sessionCounts = new Map<string, number>();
+        for (const match of matches) {
+          sessionCounts.set(match.session_id, (sessionCounts.get(match.session_id) ?? 0) + 1);
+        }
+
+        const max = limit ?? 50;
+        return {
+          total: matches.length,
+          mode: mode ?? 'any',
+          terms,
+          session_hits: Array.from(sessionCounts.entries()).map(([session_id, count]) => ({
+            session_id,
+            count,
+          })),
+          events: matches.slice(0, max).map((event) => ({
+            ts: event.ts,
+            session_id: event.session_id,
+            summary: event.summary,
+            evidence_frame: event.evidence_frame,
+          })),
+        };
+      },
+    }),
     get_evidence_frames: tool({
       description: 'Get evidence frame numbers for a session.',
       inputSchema: z.object({
@@ -269,7 +318,7 @@ function createAnalysisAgent(context?: ChatContext) {
       }
       if (!context.session_id) {
         return {
-          activeTools: ['pcap_overview', 'list_sessions', 'search_timeline'] as Array<
+          activeTools: ['pcap_overview', 'list_sessions', 'search_timeline', 'pcap_search'] as Array<
             keyof typeof tools
           >,
         };
@@ -318,6 +367,12 @@ function summarizeToolResults(results: Array<{ toolCallId: string; toolName: str
           toolCallId,
           toolName,
           summary: `search_timeline: ${output.total ?? 0} matches (showing ${output.events?.length ?? 0})`,
+        };
+      case 'pcap_search':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_search: ${output.total ?? 0} matches for ${Array.isArray(output.terms) ? output.terms.join(', ') : 'terms'}`,
         };
       case 'get_evidence_frames':
         return {
