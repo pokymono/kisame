@@ -1841,16 +1841,94 @@ async function initApp() {
   ui.navAnalyzeButton.addEventListener('click', () => setActiveTab('analyze'));
   ui.navExportButton.addEventListener('click', () => setActiveTab('export'));
 
-  // ============ System Terminal Setup ============
-  let terminal: Terminal | null = null;
-  let fitAddon: FitAddon | null = null;
-  let terminalInitialized = false;
+  // ============ Multi-Terminal System ============
+  interface TerminalInstance {
+    id: string;
+    name: string;
+    terminal: Terminal;
+    fitAddon: FitAddon;
+    container: HTMLElement;
+    tab: HTMLElement;
+  }
+  
+  const terminals: Map<string, TerminalInstance> = new Map();
+  let activeTerminalId: string | null = null;
+  let terminalCounter = 0;
 
-  async function initTerminal() {
-    if (terminalInitialized || !window.electronAPI?.terminal) return;
+  function createTerminalTab(instance: TerminalInstance): HTMLElement {
+    const tab = document.createElement('div');
+    tab.className = 'flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-colors group';
+    tab.dataset.terminalId = instance.id;
+    
+    // Terminal icon
+    const icon = document.createElement('span');
+    icon.innerHTML = `<svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`;
+    
+    // Name
+    const name = document.createElement('span');
+    name.className = 'truncate max-w-[80px]';
+    name.textContent = instance.name;
+    
+    // Close button
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'size-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-white/20 text-white/40 hover:text-white transition-all';
+    closeBtn.innerHTML = `<svg class="size-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
+    closeBtn.onclick = (e) => {
+      e.stopPropagation();
+      closeTerminal(instance.id);
+    };
+    
+    tab.append(icon, name, closeBtn);
+    
+    tab.onclick = () => switchToTerminal(instance.id);
+    
+    return tab;
+  }
+
+  function updateTabStyles() {
+    for (const [id, instance] of terminals) {
+      if (id === activeTerminalId) {
+        instance.tab.className = 'flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-colors group bg-[var(--accent-teal)]/20 text-[var(--accent-teal)] border border-[var(--accent-teal)]/30';
+      } else {
+        instance.tab.className = 'flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-colors group text-white/50 hover:text-white/70 hover:bg-white/5 border border-transparent';
+      }
+    }
+  }
+
+  function switchToTerminal(id: string) {
+    const instance = terminals.get(id);
+    if (!instance) return;
+    
+    // Hide all terminal containers
+    for (const t of terminals.values()) {
+      t.container.classList.add('hidden');
+    }
+    
+    // Show selected terminal
+    instance.container.classList.remove('hidden');
+    activeTerminalId = id;
+    updateTabStyles();
+    
+    // Focus and fit
+    setTimeout(() => {
+      instance.fitAddon.fit();
+      instance.terminal.focus();
+    }, 10);
+  }
+
+  async function createNewTerminal(): Promise<string | null> {
+    if (!window.electronAPI?.terminal) return null;
+    
+    terminalCounter++;
+    const name = `bash ${terminalCounter}`;
+    
+    // Create container for this terminal
+    const container = document.createElement('div');
+    container.className = 'absolute inset-0';
+    ui.terminalContainer.appendChild(container);
     
     // Create xterm instance
-    terminal = new Terminal({
+    const terminal = new Terminal({
       theme: {
         background: '#0d1117',
         foreground: '#c9d1d9',
@@ -1881,63 +1959,118 @@ async function initApp() {
       cursorStyle: 'bar',
     });
     
-    fitAddon = new FitAddon();
+    const fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    
-    // Open terminal in container
-    terminal.open(ui.terminalContainer);
-    
-    // Small delay to let DOM settle before fitting
-    setTimeout(() => {
-      fitAddon?.fit();
-    }, 100);
+    terminal.open(container);
     
     // Create PTY process
     const { cols, rows } = terminal;
-    await window.electronAPI.terminal.create(cols, rows);
+    const result = await window.electronAPI.terminal.create(cols, rows);
+    const id = result.id;
     
-    // Handle data from PTY
-    window.electronAPI.terminal.onData((data) => {
-      terminal?.write(data);
-    });
+    // Create instance object
+    const instance: TerminalInstance = {
+      id,
+      name,
+      terminal,
+      fitAddon,
+      container,
+      tab: document.createElement('div'), // Placeholder, will be replaced
+    };
     
-    // Handle PTY exit
-    window.electronAPI.terminal.onExit((exitCode) => {
-      terminal?.write(`\r\n\x1b[33mProcess exited with code ${exitCode}\x1b[0m\r\n`);
-      // Restart terminal
-      setTimeout(() => {
-        if (terminal) {
-          const { cols, rows } = terminal;
-          window.electronAPI.terminal.create(cols, rows);
-        }
-      }, 1000);
-    });
+    // Create and add tab
+    instance.tab = createTerminalTab(instance);
+    ui.terminalTabsContainer.appendChild(instance.tab);
+    
+    // Store instance
+    terminals.set(id, instance);
     
     // Send input to PTY
     terminal.onData((data) => {
-      window.electronAPI.terminal.write(data);
+      window.electronAPI.terminal.write(id, data);
     });
     
     // Handle resize
     terminal.onResize(({ cols, rows }) => {
-      window.electronAPI.terminal.resize(cols, rows);
+      window.electronAPI.terminal.resize(id, cols, rows);
     });
     
-    // Fit terminal on container resize
+    // Fit on container resize
     const resizeObserver = new ResizeObserver(() => {
-      fitAddon?.fit();
+      if (!container.classList.contains('hidden')) {
+        fitAddon.fit();
+      }
     });
-    resizeObserver.observe(ui.terminalContainer);
+    resizeObserver.observe(container);
     
-    terminalInitialized = true;
+    // Switch to this terminal
+    switchToTerminal(id);
+    
+    // Fit after a small delay
+    setTimeout(() => fitAddon.fit(), 50);
+    
+    return id;
   }
 
-  // Initialize terminal when app loads (it's always visible now)
-  void initTerminal();
+  function closeTerminal(id: string) {
+    const instance = terminals.get(id);
+    if (!instance) return;
+    
+    // Kill PTY
+    window.electronAPI.terminal.kill(id);
+    
+    // Dispose xterm
+    instance.terminal.dispose();
+    
+    // Remove DOM elements
+    instance.container.remove();
+    instance.tab.remove();
+    
+    // Remove from map
+    terminals.delete(id);
+    
+    // If this was active, switch to another
+    if (activeTerminalId === id) {
+      const remaining = Array.from(terminals.keys());
+      if (remaining.length > 0) {
+        switchToTerminal(remaining[remaining.length - 1]);
+      } else {
+        activeTerminalId = null;
+        // Create a new terminal if all closed
+        void createNewTerminal();
+      }
+    }
+  }
 
-  // Nav terminal button just focuses the terminal
+  // Handle data from all PTY processes
+  window.electronAPI?.terminal.onData((id, data) => {
+    const instance = terminals.get(id);
+    if (instance) {
+      instance.terminal.write(data);
+    }
+  });
+
+  // Handle PTY exit
+  window.electronAPI?.terminal.onExit((id, exitCode) => {
+    const instance = terminals.get(id);
+    if (instance) {
+      instance.terminal.write(`\r\n\x1b[33mProcess exited with code ${exitCode}\x1b[0m\r\n`);
+      // Remove the tab after a delay
+      setTimeout(() => closeTerminal(id), 2000);
+    }
+  });
+
+  // Add button creates new terminal
+  ui.terminalAddButton.addEventListener('click', () => {
+    void createNewTerminal();
+  });
+
+  // Nav terminal button focuses current terminal
   ui.navTerminalButton.addEventListener('click', () => {
-    terminal?.focus();
+    if (activeTerminalId) {
+      const instance = terminals.get(activeTerminalId);
+      instance?.terminal.focus();
+    }
     // Highlight button briefly
     const terminalIcon = ui.navTerminalButton.querySelector('svg');
     ui.navTerminalButton.classList.add('bg-[var(--accent-teal)]/10', 'border-[var(--accent-teal)]/40');
@@ -1945,6 +2078,12 @@ async function initApp() {
     terminalIcon?.classList.remove('text-white/40');
     terminalIcon?.classList.add('text-[var(--accent-teal)]');
   });
+
+  // Make terminal container relative for absolute positioning of terminal instances
+  ui.terminalContainer.style.position = 'relative';
+
+  // Initialize first terminal on load
+  void createNewTerminal();
 
   setActiveTab(activeTab);
   render();
