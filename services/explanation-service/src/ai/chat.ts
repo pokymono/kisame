@@ -19,6 +19,48 @@ type ToolResultSummary = {
   summary: string;
 };
 
+type DomainCounts = { dns: number; sni: number; http: number };
+
+function normalizeDomain(value: string): string {
+  return value.trim().toLowerCase().replace(/\.+$/, '').replace(/\.$/, '');
+}
+
+function timelineSearchText(event: AnalysisArtifact['timeline'][number]): string {
+  const parts = [
+    event.summary,
+    event.meta?.dns_name,
+    event.meta?.sni,
+    event.meta?.http?.method,
+    event.meta?.http?.host,
+    event.meta?.http?.uri,
+  ];
+  return parts.filter(Boolean).join(' ').toLowerCase();
+}
+
+function isGlobalQuestion(query: string): boolean {
+  const lower = query.toLowerCase();
+  return (
+    lower.includes('entire') ||
+    lower.includes('whole') ||
+    lower.includes('overall') ||
+    lower.includes('pcap') ||
+    lower.includes('capture') ||
+    lower.includes('all sessions')
+  );
+}
+
+function isDomainLike(term: string): boolean {
+  const cleaned = term.toLowerCase().trim();
+  return cleaned.includes('.') && !cleaned.includes(' ');
+}
+
+function normalizeSearchTerms(terms: string[]): string[] {
+  return terms
+    .flatMap((term) => term.split(/\s+/))
+    .map((term) => term.trim())
+    .filter(Boolean);
+}
+
 function buildSystemPrompt(context?: ChatContext): string {
   const basePrompt = `You are Kisame, an AI assistant specialized in network traffic analysis and cybersecurity forensics.
 You help users understand packet captures (PCAPs) by correlating sessions, timelines, and evidence frames.
@@ -41,6 +83,8 @@ Tool usage policy:
 - When context is available, start with 'pcap_overview' or 'list_sessions' to ground the response before interpreting activity.
 - If the question is about the entire capture (e.g., "was YouTube opened", "any vtop traffic"), use 'pcap_search' across all sessions. Do not limit to the selected session unless explicitly asked.
 - Use 'pcap_domains' for capture-wide domain questions, 'pcap_top_talkers' for top IP/traffic questions, and 'pcap_protocols' for protocol stack questions.
+- Use 'pcap_domain_sessions' to connect a domain to its sessions and 'pcap_session_domains' to list domains inside a session.
+- Use 'pcap_sessions_query' to filter sessions by IP/port/domain/flags and 'pcap_timeline_range' for time-windowed analysis.
 
 Response format:
 - Start with a short 2–4 sentence summary.
@@ -100,21 +144,23 @@ function getTimelinePreview(artifact: AnalysisArtifact, sessionId: string): stri
 
 function createTools(context?: ChatContext) {
   const artifact = context?.artifact;
-  const domainIndex: Map<string, { dns: number; sni: number; http: number }> | null = artifact
-    ? new Map()
-    : null;
+  const domainIndex: Map<string, DomainCounts> | null = artifact ? new Map() : null;
   let domainIndexBuilt = false;
   let talkerIndex: Map<string, { bytes: number; packets: number }> | null = artifact ? new Map() : null;
   let talkerIndexBuilt = false;
   let protocolIndex: Map<string, number> | null = artifact ? new Map() : null;
   let protocolIndexBuilt = false;
+  const sessionDomainIndex: Map<string, Map<string, DomainCounts>> | null = artifact ? new Map() : null;
+  const domainSessionIndex: Map<string, Map<string, DomainCounts>> | null = artifact ? new Map() : null;
+  let sessionDomainIndexBuilt = false;
 
   const ensureDomainIndex = () => {
     if (!artifact || !domainIndex || domainIndexBuilt) return;
     domainIndexBuilt = true;
 
     const add = (domain: string, type: 'dns' | 'sni' | 'http') => {
-      const key = domain.toLowerCase();
+      const key = normalizeDomain(domain);
+      if (!key) return;
       const entry = domainIndex.get(key) ?? { dns: 0, sni: 0, http: 0 };
       entry[type] += 1;
       domainIndex.set(key, entry);
@@ -141,6 +187,49 @@ function createTools(context?: ChatContext) {
       }
     }
   };
+
+  const ensureSessionDomainIndex = () => {
+    if (!artifact || !sessionDomainIndex || !domainSessionIndex || sessionDomainIndexBuilt) return;
+    sessionDomainIndexBuilt = true;
+
+    const add = (sessionId: string, domain: string, type: 'dns' | 'sni' | 'http') => {
+      const key = normalizeDomain(domain);
+      if (!key) return;
+      const sessionEntry = sessionDomainIndex.get(sessionId) ?? new Map<string, DomainCounts>();
+      const sessionCounts = sessionEntry.get(key) ?? { dns: 0, sni: 0, http: 0 };
+      sessionCounts[type] += 1;
+      sessionEntry.set(key, sessionCounts);
+      sessionDomainIndex.set(sessionId, sessionEntry);
+
+      const domainEntry = domainSessionIndex.get(key) ?? new Map<string, DomainCounts>();
+      const domainCounts = domainEntry.get(sessionId) ?? { dns: 0, sni: 0, http: 0 };
+      domainCounts[type] += 1;
+      domainEntry.set(sessionId, domainCounts);
+      domainSessionIndex.set(key, domainEntry);
+    };
+
+    for (const event of artifact.timeline ?? []) {
+      if (event.kind === 'dns_query') {
+        const name = event.meta?.dns_name ?? event.summary.replace(/^DNS query:\s*/i, '').trim();
+        if (name) add(event.session_id, name, 'dns');
+      } else if (event.kind === 'tls_sni') {
+        const sni = event.meta?.sni ?? event.summary.replace(/^TLS SNI:\s*/i, '').trim();
+        if (sni) add(event.session_id, sni, 'sni');
+      } else if (event.kind === 'http_request') {
+        const host =
+          event.meta?.http?.host ??
+          (() => {
+            const cleaned = event.summary.replace(/^HTTP request:\s*/i, '').trim();
+            const parts = cleaned.split(' ');
+            if (parts.length < 2) return '';
+            const hostAndPath = parts.slice(1).join(' ');
+            return hostAndPath.split('/')[0] ?? '';
+          })();
+        if (host) add(event.session_id, host, 'http');
+      }
+    }
+  };
+
 
   const ensureTalkerIndex = () => {
     if (!artifact || !talkerIndex || talkerIndexBuilt) return;
@@ -286,7 +375,8 @@ function createTools(context?: ChatContext) {
         }
         const events = artifact.timeline ?? [];
         const filtered = session_id ? events.filter((e) => e.session_id === session_id) : events;
-        const matches = filtered.filter((e) => e.summary.toLowerCase().includes(query.toLowerCase()));
+        const needle = query.toLowerCase();
+        const matches = filtered.filter((e) => timelineSearchText(e).includes(needle));
         const max = limit ?? 50;
         return {
           total: matches.length,
@@ -403,7 +493,7 @@ function createTools(context?: ChatContext) {
         }
         const events = artifact.timeline ?? [];
         const matches = events.filter((event) => {
-          const text = event.summary.toLowerCase();
+          const text = timelineSearchText(event);
           if (mode === 'all') {
             return normalized.every((term) => text.includes(term));
           }
@@ -459,6 +549,288 @@ function createTools(context?: ChatContext) {
         };
       },
     }),
+    pcap_session_domains: tool({
+      description: 'List domains observed in a specific session (DNS, TLS SNI, HTTP host).',
+      inputSchema: z.object({
+        session_id: z.string(),
+        contains: z.string().optional(),
+        sources: z.array(z.enum(['dns', 'sni', 'http'])).optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      execute: async ({ session_id, contains, sources, limit }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        ensureSessionDomainIndex();
+        if (!sessionDomainIndex) {
+          return { error: 'Session domain index unavailable.' };
+        }
+
+        const entry = sessionDomainIndex.get(session_id);
+        if (!entry) {
+          return { error: `No domains recorded for session ${session_id}.` };
+        }
+
+        const filter = contains?.toLowerCase().trim();
+        const allowedSources = sources && sources.length ? new Set(sources) : null;
+        const rows = Array.from(entry.entries())
+          .filter(([domain]) => (filter ? domain.includes(filter) : true))
+          .map(([domain, counts]) => {
+            const includeAll = !allowedSources;
+            const total =
+              (includeAll || allowedSources.has('dns') ? counts.dns : 0) +
+              (includeAll || allowedSources.has('sni') ? counts.sni : 0) +
+              (includeAll || allowedSources.has('http') ? counts.http : 0);
+            return { domain, total, dns: counts.dns, sni: counts.sni, http: counts.http };
+          })
+          .filter((row) => row.total > 0)
+          .sort((a, b) => b.total - a.total);
+
+        const max = limit ?? 50;
+        return {
+          session_id,
+          total: rows.length,
+          domains: rows.slice(0, max),
+        };
+      },
+    }),
+    pcap_domain_sessions: tool({
+      description: 'Find sessions associated with a given domain (DNS, TLS SNI, HTTP host).',
+      inputSchema: z.object({
+        domain: z.string().min(1),
+        match: z.enum(['contains', 'exact', 'suffix']).optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      execute: async ({ domain, match, limit }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        ensureSessionDomainIndex();
+        if (!domainSessionIndex) {
+          return { error: 'Domain session index unavailable.' };
+        }
+
+        const query = normalizeDomain(domain);
+        const mode = match ?? 'contains';
+        const matches = Array.from(domainSessionIndex.entries()).filter(([key]) => {
+          if (mode === 'exact') return key === query;
+          if (mode === 'suffix') return key.endsWith(query);
+          return key.includes(query);
+        });
+
+        const sessionAgg = new Map<string, DomainCounts>();
+        const matchedDomains = matches.map(([key]) => key);
+        for (const [, sessionMap] of matches) {
+          for (const [sessionId, counts] of sessionMap.entries()) {
+            const entry = sessionAgg.get(sessionId) ?? { dns: 0, sni: 0, http: 0 };
+            entry.dns += counts.dns;
+            entry.sni += counts.sni;
+            entry.http += counts.http;
+            sessionAgg.set(sessionId, entry);
+          }
+        }
+
+        const rows = Array.from(sessionAgg.entries())
+          .map(([session_id, counts]) => {
+            const session = artifact.sessions.find((s) => s.id === session_id);
+            return {
+              session_id,
+              transport: session?.transport,
+              endpoints: session?.endpoints,
+              packet_count: session?.packet_count,
+              byte_count: session?.byte_count,
+              first_ts: session?.first_ts,
+              last_ts: session?.last_ts,
+              total: counts.dns + counts.sni + counts.http,
+              dns: counts.dns,
+              sni: counts.sni,
+              http: counts.http,
+            };
+          })
+          .sort((a, b) => (b.total ?? 0) - (a.total ?? 0));
+
+        const max = limit ?? 50;
+        return {
+          query: domain,
+          match: mode,
+          matched_domains: matchedDomains,
+          total_sessions: rows.length,
+          sessions: rows.slice(0, max),
+        };
+      },
+    }),
+    pcap_sessions_query: tool({
+      description:
+        'Filter and sort sessions by endpoints, ports, transport, domain, rule flags, or size. Use for targeted session discovery.',
+      inputSchema: z.object({
+        ip: z.string().optional(),
+        port: z.number().int().optional(),
+        transport: z.enum(['tcp', 'udp', 'other']).optional(),
+        domain: z.string().optional(),
+        rule_flags: z.array(z.string()).optional(),
+        require_all_flags: z.boolean().optional(),
+        min_packets: z.number().int().min(0).optional(),
+        min_bytes: z.number().int().min(0).optional(),
+        min_duration_seconds: z.number().min(0).optional(),
+        sort_by: z.enum(['packets', 'bytes', 'duration', 'first_ts']).optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      execute: async ({
+        ip,
+        port,
+        transport,
+        domain,
+        rule_flags,
+        require_all_flags,
+        min_packets,
+        min_bytes,
+        min_duration_seconds,
+        sort_by,
+        limit,
+      }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+
+        let sessions = artifact.sessions ?? [];
+
+        if (ip) {
+          sessions = sessions.filter(
+            (s) => s.endpoints.a.ip === ip || s.endpoints.b.ip === ip
+          );
+        }
+
+        if (port != null) {
+          sessions = sessions.filter(
+            (s) => s.endpoints.a.port === port || s.endpoints.b.port === port
+          );
+        }
+
+        if (transport) {
+          sessions = sessions.filter((s) => s.transport === transport);
+        }
+
+        if (domain) {
+          ensureSessionDomainIndex();
+          const needle = normalizeDomain(domain);
+          sessions = sessions.filter((s) => {
+            const domainMap = sessionDomainIndex?.get(s.id);
+            if (!domainMap) return false;
+            return Array.from(domainMap.keys()).some((key) => key.includes(needle));
+          });
+        }
+
+        if (rule_flags && rule_flags.length) {
+          const required = new Set(rule_flags);
+          sessions = sessions.filter((s) => {
+            const flags = new Set(s.rule_flags ?? []);
+            if (require_all_flags) {
+              for (const flag of required) {
+                if (!flags.has(flag)) return false;
+              }
+              return true;
+            }
+            for (const flag of required) {
+              if (flags.has(flag)) return true;
+            }
+            return false;
+          });
+        }
+
+        if (min_packets != null) {
+          sessions = sessions.filter((s) => s.packet_count >= min_packets);
+        }
+
+        if (min_bytes != null) {
+          sessions = sessions.filter((s) => s.byte_count >= min_bytes);
+        }
+
+        if (min_duration_seconds != null) {
+          sessions = sessions.filter((s) => s.duration_seconds >= min_duration_seconds);
+        }
+
+        const sortKey = sort_by ?? 'bytes';
+        sessions = [...sessions].sort((a, b) => {
+          if (sortKey === 'packets') return b.packet_count - a.packet_count;
+          if (sortKey === 'duration') return (b.duration_seconds ?? 0) - (a.duration_seconds ?? 0);
+          if (sortKey === 'first_ts') return a.first_ts - b.first_ts;
+          return b.byte_count - a.byte_count;
+        });
+
+        const max = limit ?? 50;
+        return {
+          total: sessions.length,
+          sessions: sessions.slice(0, max).map((session) => ({
+            id: session.id,
+            transport: session.transport,
+            endpoints: session.endpoints,
+            packet_count: session.packet_count,
+            byte_count: session.byte_count,
+            duration_seconds: session.duration_seconds,
+            first_ts: session.first_ts,
+            last_ts: session.last_ts,
+            rule_flags: session.rule_flags ?? [],
+          })),
+        };
+      },
+    }),
+    pcap_timeline_range: tool({
+      description: 'Fetch timeline events for a time range, optionally filtered by session and kind.',
+      inputSchema: z.object({
+        start_ts: z.number().optional(),
+        end_ts: z.number().optional(),
+        session_id: z.string().optional(),
+        kinds: z.array(z.string()).optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      execute: async ({ start_ts, end_ts, session_id, kinds, limit }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        const minTs = start_ts ?? Number.NEGATIVE_INFINITY;
+        const maxTs = end_ts ?? Number.POSITIVE_INFINITY;
+        const kindSet = kinds && kinds.length ? new Set(kinds) : null;
+        const events = (artifact.timeline ?? []).filter((event) => {
+          if (event.ts < minTs || event.ts > maxTs) return false;
+          if (session_id && event.session_id !== session_id) return false;
+          if (kindSet && !kindSet.has(event.kind)) return false;
+          return true;
+        });
+        const max = limit ?? 50;
+        return {
+          total: events.length,
+          events: events.slice(0, max).map((event) => ({
+            ts: event.ts,
+            session_id: event.session_id,
+            kind: event.kind,
+            summary: event.summary,
+            evidence_frame: event.evidence_frame,
+          })),
+        };
+      },
+    }),
+    pcap_event_kinds: tool({
+      description: 'List timeline event kinds and counts, optionally for a single session.',
+      inputSchema: z.object({
+        session_id: z.string().optional(),
+      }),
+      execute: async ({ session_id }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+        const events = session_id
+          ? (artifact.timeline ?? []).filter((event) => event.session_id === session_id)
+          : artifact.timeline ?? [];
+        const counts = new Map<string, number>();
+        for (const event of events) {
+          counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
+        }
+        const entries = Array.from(counts.entries())
+          .map(([kind, count]) => ({ kind, count }))
+          .sort((a, b) => b.count - a.count);
+        return { total: entries.length, kinds: entries };
+      },
+    }),
   };
 }
 
@@ -466,6 +838,19 @@ function createAnalysisAgent(context?: ChatContext) {
   const modelName = process.env.OPENAI_MODEL ?? 'gpt-5.2';
   const tools = createTools(context);
   const allToolNames = Object.keys(tools) as Array<keyof typeof tools>;
+  const globalToolNames = [
+    'pcap_overview',
+    'list_sessions',
+    'search_timeline',
+    'pcap_search',
+    'pcap_domains',
+    'pcap_domain_sessions',
+    'pcap_session_domains',
+    'pcap_sessions_query',
+    'pcap_top_talkers',
+    'pcap_protocols',
+    'pcap_event_kinds',
+  ] as Array<keyof typeof tools>;
 
   return new ToolLoopAgent({
     id: 'kisame-analysis-agent',
@@ -474,26 +859,20 @@ function createAnalysisAgent(context?: ChatContext) {
     tools,
     stopWhen: stepCountIs(8),
     maxOutputTokens: 1024,
-    prepareStep: async () => {
+    prepareStep: async ({ stepNumber, steps }) => {
       if (!context?.artifact) {
         return { activeTools: [] };
       }
       if (!context.session_id) {
         return {
-          activeTools: [
-            'pcap_overview',
-            'list_sessions',
-            'search_timeline',
-            'pcap_search',
-            'pcap_domains',
-            'pcap_top_talkers',
-            'pcap_protocols',
-          ] as Array<
-            keyof typeof tools
-          >,
+          activeTools: globalToolNames,
+          toolChoice: stepNumber === 0 && steps.length === 0 ? 'required' : 'auto',
         };
       }
-      return { activeTools: allToolNames };
+      return {
+        activeTools: allToolNames,
+        toolChoice: stepNumber === 0 && steps.length === 0 ? 'required' : 'auto',
+      };
     },
   });
 }
@@ -550,6 +929,24 @@ function summarizeToolResults(results: Array<{ toolCallId: string; toolName: str
           toolName,
           summary: `pcap_domains: ${output.total ?? 0} domains`,
         };
+      case 'pcap_session_domains':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_session_domains: ${output.total ?? 0} domains`,
+        };
+      case 'pcap_domain_sessions':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_domain_sessions: ${output.total_sessions ?? 0} sessions`,
+        };
+      case 'pcap_sessions_query':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_sessions_query: ${output.total ?? 0} sessions`,
+        };
       case 'pcap_top_talkers':
         return {
           toolCallId,
@@ -561,6 +958,18 @@ function summarizeToolResults(results: Array<{ toolCallId: string; toolName: str
           toolCallId,
           toolName,
           summary: `pcap_protocols: ${output.total ?? 0} protocols`,
+        };
+      case 'pcap_timeline_range':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_timeline_range: ${output.total ?? 0} events`,
+        };
+      case 'pcap_event_kinds':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_event_kinds: ${output.total ?? 0} kinds`,
         };
       case 'get_evidence_frames':
         return {
@@ -627,6 +1036,17 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
     controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
   };
 
+  const emitToolSummary = (
+    controller: ReadableStreamDefaultController,
+    toolResults: Array<{ toolCallId: string; toolName: string; output: any }>
+  ) => {
+    if (!toolResults.length) return;
+    const summaries = summarizeToolResults(toolResults as any);
+    if (!summaries.length) return;
+    const summaryText = summaries.map((s) => `- ${s.summary}`).join('\n');
+    sendEvent(controller, { type: 'tool_summary', summary: summaryText });
+  };
+
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const contextAvailable = !!(context?.session_id && context?.artifact);
@@ -654,8 +1074,57 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
 
       try {
         const agent = createAnalysisAgent(context);
+        let stepCount = 0;
+        let promptToSend = query;
+
+        if (context?.artifact) {
+          const global = !context.session_id && isGlobalQuestion(query);
+          const tokens = normalizeSearchTerms([query]);
+          const domainToken = tokens.find(isDomainLike);
+
+          if (domainToken) {
+            const preface = global
+              ? `Before answering, use pcap_domain_sessions for domain "${domainToken}" to locate sessions across the capture.`
+              : `Before answering, use pcap_session_domains or pcap_domain_sessions to ground domain "${domainToken}".`;
+            promptToSend = `${preface}\n\nUser question: ${query}`;
+          } else if (global) {
+            const preface =
+              'Before answering, use pcap_search or pcap_domains to check the entire capture (not just one session).';
+            promptToSend = `${preface}\n\nUser question: ${query}`;
+          }
+        }
+
         const result = await agent.stream({
-          prompt: query,
+          prompt: promptToSend,
+          onStepFinish: (step) => {
+            stepCount += 1;
+            const toolCalls = step.toolCalls?.length ?? 0;
+            const totalTokens = step.usage?.totalTokens;
+            const tokenLabel = totalTokens ? ` • ${totalTokens} tokens` : '';
+            const toolLabel = toolCalls ? ` • ${toolCalls} tool call${toolCalls === 1 ? '' : 's'}` : '';
+            sendEvent(controller, {
+              type: 'status',
+              stage: 'step',
+              message: `Step ${stepCount}${toolLabel}${tokenLabel}`,
+            });
+
+            if (step.warnings && step.warnings.length) {
+              for (const warning of step.warnings) {
+                const msg = warning.type === 'other' 
+                  ? (warning as any).message 
+                  : `${warning.type}: ${(warning as any).feature || (warning as any).details || 'unknown'}`;
+                sendEvent(controller, {
+                  type: 'status',
+                  stage: 'warning',
+                  message: msg,
+                });
+              }
+            }
+
+            if (step.toolResults && step.toolResults.length) {
+              emitToolSummary(controller, step.toolResults as any);
+            }
+          },
         });
 
         let receivedText = false;
@@ -708,11 +1177,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
         }
 
         const toolResults = await result.toolResults;
-        if (toolResults.length > 0) {
-          const summaries = summarizeToolResults(toolResults as any);
-          const summaryText = summaries.map((s) => `- ${s.summary}`).join('\n');
-          sendEvent(controller, { type: 'tool_summary', summary: summaryText });
-        }
+        emitToolSummary(controller, toolResults as any);
 
         const finishReason = await result.finishReason;
         sendEvent(controller, { type: 'done', finish_reason: finishReason });
