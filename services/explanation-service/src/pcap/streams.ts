@@ -31,6 +31,24 @@ export type FollowTcpStreamResult = {
     text: string;
     truncated: boolean;
   }>;
+  segments?: Array<{
+    direction: 'a_to_b' | 'b_to_a' | 'unknown';
+    frame: number;
+    ts: number;
+    seq: number;
+    src: Endpoint;
+    dst: Endpoint;
+    bytes: number;
+    text: string;
+    truncated: boolean;
+  }>;
+  segments_truncated?: boolean;
+  match?: {
+    query: string;
+    mode: 'substring' | 'regex';
+    case_sensitive: boolean;
+    context_packets: number;
+  };
   notes?: string[];
 };
 
@@ -46,6 +64,8 @@ type PayloadRow = {
 const DEFAULT_MAX_BYTES = 12000;
 const DEFAULT_MAX_COMBINED_BYTES = 16000;
 const DEFAULT_MAX_SEGMENTS = 80;
+const DEFAULT_MAX_SEGMENT_BYTES = 2000;
+const DEFAULT_MAX_OUTPUT_SEGMENTS = 40;
 
 function parseTsvLine(line: string): string[] {
   const values: string[] = [];
@@ -253,6 +273,17 @@ export async function followTcpStream(
     maxBytesPerDirection?: number;
     maxCombinedBytes?: number;
     maxSegments?: number;
+    maxBytesPerSegment?: number;
+    maxOutputSegments?: number;
+    direction?: 'a_to_b' | 'b_to_a' | 'both';
+    contains?: string;
+    matchMode?: 'substring' | 'regex';
+    caseSensitive?: boolean;
+    contextPackets?: number;
+    startFrame?: number;
+    endFrame?: number;
+    startTs?: number;
+    endTs?: number;
   }
 ): Promise<FollowTcpStreamResult> {
   const tsharkPath = resolveTsharkPath();
@@ -315,6 +346,16 @@ export async function followTcpStream(
         { from: 'a', to: 'b', bytes: 0, text: '', truncated: false },
         { from: 'b', to: 'a', bytes: 0, text: '', truncated: false },
       ],
+      segments: [],
+      segments_truncated: false,
+      match: opts?.contains
+        ? {
+            query: opts.contains,
+            mode: opts.matchMode ?? 'substring',
+            case_sensitive: Boolean(opts.caseSensitive),
+            context_packets: opts.contextPackets ?? 0,
+          }
+        : undefined,
       notes: ['No payload frames found for this stream.'],
     };
   }
@@ -367,6 +408,16 @@ export async function followTcpStream(
         { from: 'a', to: 'b', bytes: 0, text: '', truncated: false },
         { from: 'b', to: 'a', bytes: 0, text: '', truncated: false },
       ],
+      segments: [],
+      segments_truncated: false,
+      match: opts?.contains
+        ? {
+            query: opts.contains,
+            mode: opts.matchMode ?? 'substring',
+            case_sensitive: Boolean(opts.caseSensitive),
+            context_packets: opts.contextPackets ?? 0,
+          }
+        : undefined,
       notes: ['No payload frames found for this stream.'],
     };
   }
@@ -377,6 +428,13 @@ export async function followTcpStream(
   };
   const keyA = endpointKey(endpoints.a);
   const keyB = endpointKey(endpoints.b);
+
+  const directionForRow = (row: PayloadRow): 'a_to_b' | 'b_to_a' | 'unknown' => {
+    const key = endpointKey(row.src);
+    if (key === keyA) return 'a_to_b';
+    if (key === keyB) return 'b_to_a';
+    return 'unknown';
+  };
 
   const aToB: PayloadRow[] = [];
   const bToA: PayloadRow[] = [];
@@ -401,6 +459,29 @@ export async function followTcpStream(
   const maxBytesPerDirection = opts?.maxBytesPerDirection ?? DEFAULT_MAX_BYTES;
   const maxCombinedBytes = opts?.maxCombinedBytes ?? DEFAULT_MAX_COMBINED_BYTES;
   const maxSegments = opts?.maxSegments ?? DEFAULT_MAX_SEGMENTS;
+  const maxBytesPerSegment = opts?.maxBytesPerSegment ?? DEFAULT_MAX_SEGMENT_BYTES;
+  const maxOutputSegments = opts?.maxOutputSegments ?? DEFAULT_MAX_OUTPUT_SEGMENTS;
+
+  const rangeFilteredRows = payloadRows.filter((row) => {
+    if (opts?.startFrame != null && row.frame < opts.startFrame) return false;
+    if (opts?.endFrame != null && row.frame > opts.endFrame) return false;
+    if (opts?.startTs != null && row.ts < opts.startTs) return false;
+    if (opts?.endTs != null && row.ts > opts.endTs) return false;
+    return true;
+  });
+
+  const directionFilteredRows = rangeFilteredRows.filter((row) => {
+    if (!opts?.direction || opts.direction === 'both') return true;
+    const dir = directionForRow(row);
+    if (opts.direction === 'a_to_b') return dir === 'a_to_b';
+    if (opts.direction === 'b_to_a') return dir === 'b_to_a';
+    return true;
+  });
+
+  const combinedSourceRows =
+    opts?.contains || opts?.direction || opts?.startFrame != null || opts?.endFrame != null || opts?.startTs != null || opts?.endTs != null
+      ? directionFilteredRows
+      : payloadRows;
 
   const buildDirectional = (rows: PayloadRow[]) => {
     let used = 0;
@@ -428,7 +509,7 @@ export async function followTcpStream(
   const dirA = buildDirectional(aToB);
   const dirB = buildDirectional(bToA);
 
-  const combinedRows = payloadRows.slice().sort((a, b) => {
+  const combinedRows = combinedSourceRows.slice().sort((a, b) => {
     if (a.ts !== b.ts) return a.ts - b.ts;
     if (a.frame !== b.frame) return a.frame - b.frame;
     return a.seq - b.seq;
@@ -476,6 +557,68 @@ export async function followTcpStream(
     notes.push('Payload output was truncated to keep responses compact.');
   }
 
+  let segments: FollowTcpStreamResult['segments'] = [];
+  let segmentsTruncated = false;
+
+  if (opts?.contains) {
+    const mode = opts.matchMode ?? 'substring';
+    const caseSensitive = Boolean(opts.caseSensitive);
+    const contextPackets = Math.max(0, Math.floor(opts.contextPackets ?? 0));
+    let matcher: (text: string) => boolean;
+
+    if (mode === 'regex') {
+      try {
+        const regex = new RegExp(opts.contains, caseSensitive ? '' : 'i');
+        matcher = (text) => regex.test(text);
+      } catch {
+        matcher = () => false;
+        notes.push('Invalid regex provided for contains; no segments matched.');
+      }
+    } else {
+      const needle = caseSensitive ? opts.contains : opts.contains.toLowerCase();
+      matcher = (text) => (caseSensitive ? text : text.toLowerCase()).includes(needle);
+    }
+
+    const ordered = directionFilteredRows.slice().sort((a, b) => {
+      if (a.ts !== b.ts) return a.ts - b.ts;
+      if (a.frame !== b.frame) return a.frame - b.frame;
+      return a.seq - b.seq;
+    });
+
+    const matchIndexes = new Set<number>();
+    for (let i = 0; i < ordered.length; i++) {
+      const row = ordered[i]!;
+      const preview = bytesToPrintableAscii(row.bytes, maxBytesPerSegment).text;
+      if (matcher(preview)) {
+        for (let j = Math.max(0, i - contextPackets); j <= Math.min(ordered.length - 1, i + contextPackets); j++) {
+          matchIndexes.add(j);
+        }
+      }
+    }
+
+    const selected = Array.from(matchIndexes)
+      .sort((a, b) => a - b)
+      .map((idx) => ordered[idx]!)
+      .slice(0, maxOutputSegments);
+
+    segments = selected.map((row) => {
+      const ascii = bytesToPrintableAscii(row.bytes, maxBytesPerSegment);
+      return {
+        direction: directionForRow(row),
+        frame: row.frame,
+        ts: row.ts,
+        seq: row.seq,
+        src: row.src,
+        dst: row.dst,
+        bytes: row.bytes.length,
+        text: ascii.text,
+        truncated: ascii.truncated,
+      };
+    });
+
+    if (matchIndexes.size > selected.length) segmentsTruncated = true;
+  }
+
   return {
     stream_id: streamId,
     endpoints,
@@ -488,6 +631,16 @@ export async function followTcpStream(
       { from: 'a', to: 'b', bytes: dirA.bytes, text: dirA.text, truncated: dirA.truncated },
       { from: 'b', to: 'a', bytes: dirB.bytes, text: dirB.text, truncated: dirB.truncated },
     ],
+    segments: segments.length ? segments : undefined,
+    segments_truncated: segments.length ? segmentsTruncated : undefined,
+    match: opts?.contains
+      ? {
+          query: opts.contains,
+          mode: opts.matchMode ?? 'substring',
+          case_sensitive: Boolean(opts.caseSensitive),
+          context_packets: Math.max(0, Math.floor(opts.contextPackets ?? 0)),
+        }
+      : undefined,
     notes: notes.length ? notes : undefined,
   };
 }

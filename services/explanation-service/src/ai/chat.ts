@@ -182,6 +182,7 @@ Tool usage policy:
 - Use 'pcap_domain_sessions' to connect a domain to its sessions and 'pcap_session_domains' to list domains inside a session.
 - Use 'pcap_sessions_query' to filter sessions by IP/port/domain/flags and 'pcap_timeline_range' for time-windowed analysis.
 - If a session has no decoded events but TCP DATA is present, use 'pcap_tcp_streams' and 'pcap_follow_tcp_stream' to reconstruct raw payloads (Wireshark Follow TCP Stream equivalent).
+- If the user wants specific commands or strings from a stream, call 'pcap_follow_tcp_stream' with 'contains', 'context_packets', and optional direction/range filters.
 - If asked whether a domain is malicious/safe or to assess reputation, use 'domain_risk_assess' and clearly label the result as a local heuristic (no external threat-intel).
 
 Response format:
@@ -672,6 +673,17 @@ function createTools(context?: ChatContext) {
         max_bytes_per_direction: z.number().int().min(200).max(50000).optional(),
         max_combined_bytes: z.number().int().min(200).max(80000).optional(),
         max_segments: z.number().int().min(1).max(200).optional(),
+        max_bytes_per_segment: z.number().int().min(100).max(20000).optional(),
+        max_output_segments: z.number().int().min(1).max(200).optional(),
+        direction: z.enum(['a_to_b', 'b_to_a', 'both']).optional(),
+        contains: z.string().min(1).optional(),
+        match_mode: z.enum(['substring', 'regex']).optional(),
+        case_sensitive: z.boolean().optional(),
+        context_packets: z.number().int().min(0).max(20).optional(),
+        start_frame: z.number().int().min(0).optional(),
+        end_frame: z.number().int().min(0).optional(),
+        start_ts: z.number().min(0).optional(),
+        end_ts: z.number().min(0).optional(),
         pcap_session_id: z.string().optional(),
       }),
       execute: async ({
@@ -679,6 +691,17 @@ function createTools(context?: ChatContext) {
         max_bytes_per_direction,
         max_combined_bytes,
         max_segments,
+        max_bytes_per_segment,
+        max_output_segments,
+        direction,
+        contains,
+        match_mode,
+        case_sensitive,
+        context_packets,
+        start_frame,
+        end_frame,
+        start_ts,
+        end_ts,
         pcap_session_id,
       }) => {
         if (!artifact) {
@@ -692,6 +715,17 @@ function createTools(context?: ChatContext) {
           maxBytesPerDirection: max_bytes_per_direction,
           maxCombinedBytes: max_combined_bytes,
           maxSegments: max_segments,
+          maxBytesPerSegment: max_bytes_per_segment,
+          maxOutputSegments: max_output_segments,
+          direction,
+          contains,
+          matchMode: match_mode,
+          caseSensitive: case_sensitive,
+          contextPackets: context_packets,
+          startFrame: start_frame,
+          endFrame: end_frame,
+          startTs: start_ts,
+          endTs: end_ts,
         });
       },
     }),
@@ -1331,7 +1365,8 @@ function summarizeToolResults(results: Array<{ toolCallId: string; toolName: str
           toolCallId,
           toolName,
           summary: output?.stream_id != null
-            ? `pcap_follow_tcp_stream: stream ${output.stream_id} • ${output.payload_frames ?? 0} payload frames • ${output.payload_bytes ?? 0} bytes`
+            ? `pcap_follow_tcp_stream: stream ${output.stream_id} • ${output.payload_frames ?? 0} payload frames • ${output.payload_bytes ?? 0} bytes` +
+              (output.segments ? ` • ${output.segments.length} matched segment${output.segments.length === 1 ? '' : 's'}` : '')
             : 'pcap_follow_tcp_stream: no stream data',
         };
       case 'pcap_timeline_range':
