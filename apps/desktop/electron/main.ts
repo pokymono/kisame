@@ -145,6 +145,10 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
   }
 });
 
+ipcMain.handle('kisame:getBackendUrl', async (): Promise<string> => {
+  return getBunServiceUrl();
+});
+
 type ChatQueryResult = {
   query: string;
   response: string;
