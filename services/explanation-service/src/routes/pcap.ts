@@ -1,7 +1,59 @@
 import { json } from '../utils/response';
 import { logInfo, logWarn, logError, toErrorMeta } from '../utils/logger';
+import { ConcurrencyLimiter, QueueFullError } from '../utils/concurrency';
 import { storePcap, getSession, listSessions, analyzeWithTshark, getTsharkInfo, explainSession } from '../pcap';
 import type { AnalysisArtifact } from '../types';
+import type { AnalyzeOptions } from '../pcap/analyzer';
+
+const analyzeLimiter = new ConcurrencyLimiter(
+  Number(process.env.ANALYZE_MAX_CONCURRENCY ?? 3),
+  Number(process.env.ANALYZE_QUEUE_LIMIT ?? 8)
+);
+
+async function analyzeInWorker(opts: AnalyzeOptions): Promise<AnalysisArtifact> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../pcap/analyze-worker.ts', import.meta.url), {
+      type: 'module',
+    });
+
+    const timeoutMs = Number(process.env.ANALYZE_WORKER_TIMEOUT_MS ?? 0);
+    const timeoutId =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            worker.terminate();
+            reject(new Error('Analysis worker timed out.'));
+          }, timeoutMs)
+        : null;
+
+    const cleanup = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      worker.terminate();
+    };
+
+    worker.onmessage = (event: MessageEvent<{ ok: boolean; artifact?: AnalysisArtifact; error?: string }>) => {
+      cleanup();
+      if (event.data.ok && event.data.artifact) {
+        resolve(event.data.artifact);
+        return;
+      }
+      reject(new Error(event.data.error ?? 'Analysis worker failed.'));
+    };
+
+    worker.onerror = (error) => {
+      cleanup();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    worker.postMessage(opts);
+  });
+}
+
+async function runAnalysis(opts: AnalyzeOptions): Promise<AnalysisArtifact> {
+  if (process.env.ANALYZE_USE_WORKER === '0') {
+    return analyzeWithTshark(opts);
+  }
+  return analyzeInWorker(opts);
+}
 
 export async function handleTsharkVersion(): Promise<Response> {
   logInfo('pcap.tshark.version');
@@ -83,9 +135,23 @@ export async function handleAnalyzePcap(req: Request): Promise<Response> {
     sample_frames_per_session: sampleFramesPerSession,
   });
 
+  let release: (() => void) | null = null;
   try {
+    try {
+      release = await analyzeLimiter.acquire();
+    } catch (error) {
+      if (error instanceof QueueFullError) {
+        logWarn('pcap.analyze.queue_full', { session_id: sessionId, ...analyzeLimiter.stats() });
+        return json(
+          { error: 'Analyze queue is full. Please retry shortly.', ...analyzeLimiter.stats() },
+          { status: 429 }
+        );
+      }
+      throw error;
+    }
+
     const startedAt = Date.now();
-    const artifact = await analyzeWithTshark({
+    const artifact = await runAnalysis({
       session,
       maxPackets,
       sampleFramesPerSession,
@@ -101,6 +167,10 @@ export async function handleAnalyzePcap(req: Request): Promise<Response> {
   } catch (e) {
     logError('pcap.analyze.error', { session_id: sessionId, error: toErrorMeta(e) });
     return json({ error: (e as Error).message ?? String(e) }, { status: 500 });
+  } finally {
+    if (typeof release === 'function') {
+      release();
+    }
   }
 }
 
