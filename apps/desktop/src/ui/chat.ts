@@ -217,6 +217,29 @@ function renderToolCalls(tools: ToolCallLog[]): HTMLElement {
   return container;
 }
 
+function renderReasoningSummary(summary: string, isStreaming?: boolean): HTMLElement {
+  const wrapper = el('div', {
+    className:
+      'my-2 py-2 px-3 rounded-lg overflow-hidden ' +
+      'bg-gradient-to-r from-white/[0.02] to-transparent ' +
+      'border-l border-white/[0.06]',
+    attrs: { 'data-reasoning-summary': 'true' },
+  });
+
+  const content = el('div', {
+    className: 'streamdown-host prose-chat text-[11px] text-white/40 font-[var(--font-mono)] leading-relaxed break-words',
+    attrs: { 'data-reasoning-content': 'true' },
+  });
+
+  wrapper.append(content);
+  const markdown = `**Reasoning summary:** ${summary}`;
+  renderMarkdown(content, markdown, Boolean(isStreaming));
+  if (isStreaming) {
+    content.classList.add('typing-cursor');
+  }
+  return wrapper;
+}
+
 function renderSuggestedNextSteps(steps: SuggestedNextStep[]): HTMLElement {
   const container = el('div', {
     className: 'mt-3 flex flex-wrap gap-2',
@@ -290,21 +313,7 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
   }
 
   if (message.reasoningSummary) {
-    const reasoningEl = el('div', {
-      className:
-        'my-2 py-2 px-3 rounded-lg overflow-hidden ' +
-        'bg-gradient-to-r from-white/[0.02] to-transparent ' +
-        'border-l border-white/[0.06]',
-      attrs: { 'data-reasoning-summary': 'true' },
-    });
-    
-    const content = el('div', {
-      className: 'text-[11px] text-white/40 font-[var(--font-mono)] leading-relaxed break-words',
-      text: message.reasoningSummary,
-    });
-    
-    reasoningEl.append(content);
-    bubble.append(reasoningEl);
+    bubble.append(renderReasoningSummary(message.reasoningSummary, message.isStreaming));
   }
 
   const contentEl = el('div', {
@@ -383,24 +392,14 @@ export function updateMessageElement(
     }
   }
 
-  const existingReasoning = bubble.querySelector('[data-reasoning-summary]');
-  if (existingReasoning) existingReasoning.remove();
+  const existingReasoning = bubble.querySelector('[data-reasoning-summary]') as HTMLElement | null;
+  if (existingReasoning) {
+    const content = existingReasoning.querySelector('[data-reasoning-content]') as HTMLElement | null;
+    if (content) destroyMarkdown(content);
+    existingReasoning.remove();
+  }
   if (message.reasoningSummary) {
-    const reasoningEl = el('div', {
-      className:
-        'my-2 py-2 px-3 rounded-lg overflow-hidden ' +
-        'bg-gradient-to-r from-white/[0.02] to-transparent ' +
-        'border-l border-white/[0.06]',
-      attrs: { 'data-reasoning-summary': 'true' },
-    });
-    
-    const content = el('div', {
-      className: 'text-[11px] text-white/40 font-[var(--font-mono)] leading-relaxed break-words',
-      text: message.reasoningSummary,
-    });
-    
-    reasoningEl.append(content);
-    
+    const reasoningEl = renderReasoningSummary(message.reasoningSummary, message.isStreaming);
     const contentEl = bubble.querySelector('[data-content]');
     if (contentEl) {
       contentEl.before(reasoningEl);
