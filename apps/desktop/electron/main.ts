@@ -4,7 +4,7 @@ import { chmodSync, existsSync, readFileSync, createReadStream, statSync } from 
 import os from 'os';
 import { stat, writeFile } from 'fs/promises';
 import { Readable } from 'stream';
-import { TransformStream } from 'stream/web';
+import { TransformStream } from 'node:stream/web';
 import * as path from 'path';
 import * as pty from 'node-pty';
 

@@ -168,10 +168,51 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
         tls_sni: Array<{ server_name: string; ts: number; evidence_frame: number }>;
       };
       rule_flags: string[];
+      protocol_tokens_seen: Set<string>;
+      tcp_payload_seen: boolean;
+      udp_payload_seen: boolean;
     }
   >();
 
   const timeline: AnalysisArtifact['timeline'] = [];
+  const TIMELINE_PROTOCOL_TOKENS = new Set([
+    'smb',
+    'smb2',
+    'ntlmssp',
+    'dcerpc',
+    'samr',
+    'lsarpc',
+    'kerberos',
+    'ldap',
+    'rdp',
+    'ssh',
+    'ftp',
+    'telnet',
+    'http',
+    'tls',
+    'ssl',
+    'dns',
+    'quic',
+    'stun',
+    'turn',
+    'ntp',
+    'ssdp',
+    'mdns',
+    'llmnr',
+    'nbns',
+    'dhcp',
+    'bootp',
+    'snmp',
+    'tftp',
+    'sip',
+    'rtp',
+    'rtcp',
+    'ike',
+    'isakmp',
+    'radius',
+    'syslog',
+    'mqtt',
+  ]);
 
   let packetCount = 0;
   let firstTs: number | null = null;
@@ -229,8 +270,33 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
         protocol_chains: {},
         observations: { dns_queries: [], http_requests: [], tls_sni: [] },
         rule_flags: [],
+        protocol_tokens_seen: new Set<string>(),
+        tcp_payload_seen: false,
+        udp_payload_seen: false,
       };
       sessionsMap.set(sessionKey, s);
+
+      if (transport === 'tcp') {
+        const srcLabel = `${srcIp}:${srcPort ?? '?'}`;
+        const dstLabel = `${dstIp}:${dstPort ?? '?'}`;
+        timeline.push({
+          ts,
+          session_id: sessionId,
+          kind: 'tcp_session_start',
+          summary: `TCP session start: ${srcLabel} -> ${dstLabel}`,
+          evidence_frame: frameNo,
+        });
+      } else if (transport === 'udp') {
+        const srcLabel = `${srcIp}:${srcPort ?? '?'}`;
+        const dstLabel = `${dstIp}:${dstPort ?? '?'}`;
+        timeline.push({
+          ts,
+          session_id: sessionId,
+          kind: 'udp_session_start',
+          summary: `UDP session start: ${srcLabel} -> ${dstLabel}`,
+          evidence_frame: frameNo,
+        });
+      }
     }
 
     s.packet_count += 1;
@@ -244,7 +310,46 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
     }
 
     const chain = at(row, 'frame.protocols').trim();
-    if (chain) s.protocol_chains[chain] = (s.protocol_chains[chain] ?? 0) + 1;
+    if (chain) {
+      s.protocol_chains[chain] = (s.protocol_chains[chain] ?? 0) + 1;
+      const tokens = chain
+        .split(':')
+        .map((token) => token.trim().toLowerCase())
+        .filter(Boolean);
+
+      for (const token of tokens) {
+        if (token === 'data' && transport === 'tcp' && !s.tcp_payload_seen) {
+          s.tcp_payload_seen = true;
+          timeline.push({
+            ts,
+            session_id: sessionId,
+            kind: 'tcp_payload',
+            summary: 'TCP payload observed',
+            evidence_frame: frameNo,
+          });
+        }
+        if (token === 'data' && transport === 'udp' && !s.udp_payload_seen) {
+          s.udp_payload_seen = true;
+          timeline.push({
+            ts,
+            session_id: sessionId,
+            kind: 'udp_payload',
+            summary: 'UDP payload observed',
+            evidence_frame: frameNo,
+          });
+        }
+        if (TIMELINE_PROTOCOL_TOKENS.has(token) && !s.protocol_tokens_seen.has(token)) {
+          s.protocol_tokens_seen.add(token);
+          timeline.push({
+            ts,
+            session_id: sessionId,
+            kind: 'protocol_observed',
+            summary: `Protocol observed: ${token.toUpperCase()}`,
+            evidence_frame: frameNo,
+          });
+        }
+      }
+    }
 
     const dnsQry = at(row, 'dns.qry.name').trim();
     if (dnsQry) {
@@ -373,6 +478,18 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
       protocols: protocolEntries.length ? protocolEntries : undefined,
     };
   });
+
+  for (const session of sessionList) {
+    if (session.transport !== 'udp') continue;
+    const duration = session.duration_seconds ?? Math.max(0, session.last_ts - session.first_ts);
+    timeline.push({
+      ts: session.last_ts,
+      session_id: session.id,
+      kind: 'udp_session_summary',
+      summary: `UDP summary: ${session.packet_count} packets, ${session.byte_count} bytes, ${duration.toFixed(2)}s`,
+      evidence_frame: session.evidence.last_frame,
+    });
+  }
 
   sessionList.sort((a, b) => (a.first_ts !== b.first_ts ? a.first_ts - b.first_ts : a.id.localeCompare(b.id)));
   timeline.sort((a, b) => (a.ts !== b.ts ? a.ts - b.ts : a.evidence_frame - b.evidence_frame));
