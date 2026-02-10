@@ -203,6 +203,115 @@ function renderToolCall(tool: ToolCallLog): HTMLElement {
   return row;
 }
 
+const MAX_TOOL_OUTPUT_CHARS = 6000;
+const MAX_TOOL_OUTPUT_PREVIEW = 90;
+
+function safeStringify(value: unknown): string {
+  const seen = new WeakSet<object>();
+  return JSON.stringify(
+    value,
+    (_key, val) => {
+      if (typeof val === 'bigint') return val.toString();
+      if (val && typeof val === 'object') {
+        if (seen.has(val)) return '[Circular]';
+        seen.add(val);
+      }
+      return val;
+    },
+    2
+  );
+}
+
+function summarizeToolOutput(output: unknown): string {
+  if (output == null) return 'No output';
+  if (typeof output === 'string') {
+    const firstLine = output.split(/\r?\n/)[0] ?? '';
+    const trimmed = firstLine.trim();
+    if (!trimmed) return 'Empty output';
+    return trimmed.length > MAX_TOOL_OUTPUT_PREVIEW ? `${trimmed.slice(0, MAX_TOOL_OUTPUT_PREVIEW)}…` : trimmed;
+  }
+  if (Array.isArray(output)) return `Array(${output.length})`;
+  if (typeof output === 'object') {
+    const keys = Object.keys(output as Record<string, unknown>);
+    if (keys.length === 0) return 'Object';
+    const preview = keys.slice(0, 3).join(', ');
+    return keys.length > 3 ? `Object(${preview}, …)` : `Object(${preview})`;
+  }
+  return String(output);
+}
+
+function stringifyToolOutput(output: unknown): { text: string; truncated: boolean } {
+  if (output == null) return { text: 'No output returned.', truncated: false };
+  const raw = typeof output === 'string' ? output : safeStringify(output);
+  if (raw.length <= MAX_TOOL_OUTPUT_CHARS) return { text: raw, truncated: false };
+  return {
+    text: `${raw.slice(0, MAX_TOOL_OUTPUT_CHARS)}\n… trimmed ${raw.length - MAX_TOOL_OUTPUT_CHARS} chars`,
+    truncated: true,
+  };
+}
+
+function renderToolOutput(tool: ToolCallLog): HTMLElement {
+  const wrapper = el('div', {
+    className: 'rounded-md border border-white/5 bg-white/[0.02] overflow-hidden',
+  });
+
+  const summaryText =
+    tool.output === undefined && tool.status === 'running'
+      ? 'Waiting for output…'
+      : summarizeToolOutput(tool.output);
+
+  const header = el('button', {
+    className:
+      'w-full flex items-center gap-2 px-2.5 py-1.5 text-left transition-colors ' +
+      'hover:bg-white/[0.03] focus:outline-none',
+    attrs: { type: 'button', 'data-tool-output-toggle': 'true' },
+  });
+
+  const name = el('span', {
+    className: 'text-[10px] font-[var(--font-mono)] text-white/55 truncate',
+    text: friendlyToolName(tool.name),
+  });
+
+  const status = el('span', {
+    className:
+      'text-[9px] font-[var(--font-mono)] tracking-wide uppercase px-1.5 py-0.5 rounded ' +
+      (tool.status === 'error'
+        ? 'text-[var(--accent-red)] bg-[var(--accent-red)]/10'
+        : tool.status === 'done'
+          ? 'text-[var(--accent-teal)] bg-[var(--accent-teal)]/10'
+          : 'text-white/40 bg-white/5'),
+    text: tool.status,
+  });
+
+  const summary = el('span', {
+    className: 'ml-auto text-[10px] text-white/35 truncate',
+    text: summaryText,
+  });
+
+  header.append(name, status, summary);
+
+  const body = el('div', {
+    className: 'hidden px-2.5 pb-2.5',
+    attrs: { 'data-tool-output-body': 'true' },
+  });
+
+  const { text } = stringifyToolOutput(tool.output);
+  const pre = el('pre', {
+    className: 'chat-code-block tool-output-block text-[10px]',
+    text,
+  });
+  body.append(pre);
+
+  header.addEventListener('click', () => {
+    const isHidden = body.classList.contains('hidden');
+    body.classList.toggle('hidden', !isHidden);
+    summary.classList.toggle('text-white/60', isHidden);
+  });
+
+  wrapper.append(header, body);
+  return wrapper;
+}
+
 function renderToolCalls(tools: ToolCallLog[]): HTMLElement {
   const container = el('div', {
     className: 'my-2 py-2 px-3 rounded-lg overflow-hidden ' +
@@ -211,9 +320,30 @@ function renderToolCalls(tools: ToolCallLog[]): HTMLElement {
     attrs: { 'data-tool-calls': 'true' },
   });
 
+  const list = el('div', { className: 'space-y-1' });
   for (const tool of tools) {
-    container.append(renderToolCall(tool));
+    list.append(renderToolCall(tool));
   }
+  container.append(list);
+
+  if (tools.length > 0) {
+    const outputs = el('div', {
+      className: 'mt-2 pt-2 border-t border-white/[0.06] space-y-2',
+      attrs: { 'data-tool-outputs': 'true' },
+    });
+
+    const header = el('div', {
+      className: 'text-[9px] font-[var(--font-mono)] tracking-[0.2em] text-white/30 uppercase',
+      text: 'Tool Output',
+    });
+    outputs.append(header);
+
+    for (const tool of tools) {
+      outputs.append(renderToolOutput(tool));
+    }
+    container.append(outputs);
+  }
+
   return container;
 }
 

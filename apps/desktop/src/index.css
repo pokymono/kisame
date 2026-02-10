@@ -434,6 +434,11 @@
   word-break: break-all;
 }
 
+.tool-output-block {
+  max-height: 240px;
+  overflow-y: auto;
+}
+
 .chat-code-block::before {
   content: '';
   position: absolute;
