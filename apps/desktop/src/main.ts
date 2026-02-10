@@ -677,6 +677,9 @@ async function initApp() {
   });
 
   const sessionElements = new Map<string, HTMLElement>();
+  const SESSION_RENDER_STEP = 400;
+  let sessionRenderLimit = SESSION_RENDER_STEP;
+  let timelineSearchTimer: number | null = null;
   const explorerElements = new Map<string, HTMLElement>();
   let draggingCaptureId: string | null = null;
   let dropTargetCaseEl: HTMLElement | null = null;
@@ -2630,9 +2633,11 @@ async function initApp() {
 
   function renderSessions(sessions: AnalysisArtifact['sessions']) {
     sessionElements.clear();
-    ui.sessionsCount.textContent = String(sessions.length);
+    const total = sessions.length;
+    const visibleCount = Math.min(sessionRenderLimit, total);
+    ui.sessionsCount.textContent = visibleCount === total ? String(total) : `${visibleCount}/${total}`;
     
-    if (sessions.length > 10) {
+    if (total > 10) {
       const skeletons = Array.from({ length: 5 }, (_, i) =>
         el('div', {
           className: 'skeleton skeleton-card animate-fade-in',
@@ -2643,62 +2648,76 @@ async function initApp() {
     }
     
     requestAnimationFrame(() => {
+      const heavyList = total > 800;
+      const visible = sessions.slice(0, visibleCount);
+      const nodes = visible.map((session, index) => {
+        const item = el('button', {
+          className: 'w-full rounded px-3 py-3 text-left transition-all data-card hover-lift',
+          attrs: { 
+            'data-session-id': session.id, 
+            type: 'button', 
+            style: heavyList ? undefined : `animation-delay: ${Math.min(index * 0.03, 0.5)}s; opacity: 0;` 
+          },
+        });
+        if (!heavyList) item.classList.add('animate-slide-in');
+
+        const header = el('div', { className: 'flex items-center justify-between' });
+        const transport = el('div', {
+          className:
+            'px-2 py-0.5 rounded text-[9px] font-[var(--font-mono)] font-semibold tracking-[0.15em] uppercase border smooth-colors ' +
+            (session.transport === 'tcp'
+              ? 'badge-tcp'
+              : session.transport === 'udp'
+                ? 'badge-udp'
+                : 'text-white/40 border-white/20 bg-white/5'),
+          text: session.transport.toUpperCase(),
+        });
+        const time = el('div', {
+          className: 'text-[10px] font-[var(--font-mono)] text-white/40',
+          text: formatTimestamp(session.first_ts).slice(11, 19),
+        });
+        header.append(transport, time);
+
+        const a = `${session.endpoints.a.ip}${session.endpoints.a.port ? `:${session.endpoints.a.port}` : ''}`;
+        const b = `${session.endpoints.b.ip}${session.endpoints.b.port ? `:${session.endpoints.b.port}` : ''}`;
+        const endpoints = el('div', {
+          className: 'mt-2.5 flex items-center gap-2 text-[11px] font-[var(--font-mono)] text-white/80 overflow-hidden',
+        });
+        const endpointA = el('span', { text: a, className: 'truncate min-w-0' });
+        const arrow = el('span', { className: 'text-[var(--accent-cyan)]/50 flex-shrink-0 transition-colors', text: '⟷' });
+        const endpointB = el('span', { text: b, className: 'truncate min-w-0' });
+        endpoints.append(endpointA, arrow, endpointB);
+
+        const meta = el('div', { className: 'mt-2 flex flex-wrap gap-3 text-[10px] font-[var(--font-mono)]' });
+        meta.append(
+          el('span', { className: 'text-white/40 smooth-colors', text: `${session.packet_count} PKT` }),
+          el('span', { className: 'text-white/40 smooth-colors', text: formatBytes(session.byte_count) })
+        );
+        if (session.rule_flags && session.rule_flags.length) {
+          const flagBadge = el('span', {
+            className: 'px-1.5 py-0.5 rounded badge-alert text-[9px] font-semibold',
+            text: session.rule_flags.slice(0, 2).join(', '),
+          });
+          meta.append(flagBadge);
+        }
+
+        item.append(header, endpoints, meta);
+        sessionElements.set(session.id, item);
+        return item;
+      });
+
+      if (total > visibleCount) {
+        const remaining = total - visibleCount;
+        const loadMore = el('button', {
+          className: 'w-full rounded px-3 py-2 text-left data-card border border-white/5 hover:border-[var(--accent-cyan)]/40 transition-colors',
+          attrs: { type: 'button', 'data-session-load-more': 'true' },
+          text: `Load more sessions (${remaining} remaining)`,
+        });
+        nodes.push(loadMore);
+      }
+
       ui.sessionsList.replaceChildren(
-        ...sessions.map((session, index) => {
-          const item = el('button', {
-            className: 'w-full rounded px-3 py-3 text-left transition-all data-card hover-lift',
-            attrs: { 
-              'data-session-id': session.id, 
-              type: 'button', 
-              style: `animation-delay: ${Math.min(index * 0.03, 0.5)}s; opacity: 0;` 
-            },
-          });
-          item.classList.add('animate-slide-in');
-
-          const header = el('div', { className: 'flex items-center justify-between' });
-          const transport = el('div', {
-            className:
-              'px-2 py-0.5 rounded text-[9px] font-[var(--font-mono)] font-semibold tracking-[0.15em] uppercase border smooth-colors ' +
-              (session.transport === 'tcp'
-                ? 'badge-tcp'
-                : session.transport === 'udp'
-                  ? 'badge-udp'
-                  : 'text-white/40 border-white/20 bg-white/5'),
-            text: session.transport.toUpperCase(),
-          });
-          const time = el('div', {
-            className: 'text-[10px] font-[var(--font-mono)] text-white/40',
-            text: formatTimestamp(session.first_ts).slice(11, 19),
-          });
-          header.append(transport, time);
-
-          const a = `${session.endpoints.a.ip}${session.endpoints.a.port ? `:${session.endpoints.a.port}` : ''}`;
-          const b = `${session.endpoints.b.ip}${session.endpoints.b.port ? `:${session.endpoints.b.port}` : ''}`;
-          const endpoints = el('div', {
-            className: 'mt-2.5 flex items-center gap-2 text-[11px] font-[var(--font-mono)] text-white/80 overflow-hidden',
-          });
-          const endpointA = el('span', { text: a, className: 'truncate min-w-0' });
-          const arrow = el('span', { className: 'text-[var(--accent-cyan)]/50 flex-shrink-0 transition-colors', text: '⟷' });
-          const endpointB = el('span', { text: b, className: 'truncate min-w-0' });
-          endpoints.append(endpointA, arrow, endpointB);
-
-          const meta = el('div', { className: 'mt-2 flex flex-wrap gap-3 text-[10px] font-[var(--font-mono)]' });
-          meta.append(
-            el('span', { className: 'text-white/40 smooth-colors', text: `${session.packet_count} PKT` }),
-            el('span', { className: 'text-white/40 smooth-colors', text: formatBytes(session.byte_count) })
-          );
-          if (session.rule_flags && session.rule_flags.length) {
-            const flagBadge = el('span', {
-              className: 'px-1.5 py-0.5 rounded badge-alert text-[9px] font-semibold',
-              text: session.rule_flags.slice(0, 2).join(', '),
-            });
-            meta.append(flagBadge);
-          }
-
-          item.append(header, endpoints, meta);
-          sessionElements.set(session.id, item);
-          return item;
-        })
+        ...nodes
       );
     });
   }
@@ -2735,11 +2754,7 @@ async function initApp() {
       return;
     }
 
-    const sorted = [...timeline].sort((a, b) =>
-      a.ts !== b.ts ? a.ts - b.ts : a.evidence_frame - b.evidence_frame
-    );
-
-    if (sorted.length > 50) {
+    if (timeline.length > 50) {
       const skeletons = Array.from({ length: 8 }, (_, i) =>
         el('div', {
           className: 'skeleton h-16 rounded animate-fade-in',
@@ -2751,7 +2766,7 @@ async function initApp() {
 
     requestAnimationFrame(() => {
       ui.timelineList.replaceChildren(
-        ...sorted.slice(0, 200).map((event, index) => {
+        ...timeline.slice(0, 200).map((event, index) => {
           const row = el('button', {
             className:
               'group relative w-full text-left pl-4 pb-3 border-l border-[var(--app-line)] ' +
@@ -2850,16 +2865,27 @@ async function initApp() {
       : analysis.sessions[0];
 
     const needle = timelineSearchQuery.trim().toLowerCase();
-    const events = (analysis.timeline ?? []).filter((event) => {
-      if (timelineScope === 'session' && event.session_id !== selected.id) return false;
-      if (timelineKindFilter !== 'all' && event.kind !== timelineKindFilter) return false;
-      if (needle && !timelineSearchText(event).includes(needle)) return false;
-      return true;
-    });
+    const eventsToRender: AnalysisArtifact['timeline'] = [];
+    let count = 0;
+    const maxRender = 200;
+    const timeline = analysis.timeline ?? [];
+
+    for (const event of timeline) {
+      if (timelineScope === 'session' && event.session_id !== selected.id) continue;
+      if (timelineKindFilter !== 'all' && event.kind !== timelineKindFilter) continue;
+      if (needle && !timelineSearchText(event).includes(needle)) continue;
+      count += 1;
+      if (eventsToRender.length < maxRender) {
+        eventsToRender.push(event);
+      }
+      if (count > maxRender && eventsToRender.length >= maxRender) {
+        break;
+      }
+    }
 
     ui.sessionIdLabel.textContent = timelineScope === 'all' ? 'SCOPE: ALL' : `Session: ${selected.id}`;
-    ui.timelineCount.textContent = events.length > 200 ? '200+' : String(events.length);
-    renderTimeline(events, { showSessionId: timelineScope === 'all' });
+    ui.timelineCount.textContent = count > maxRender ? '200+' : String(count);
+    renderTimeline(eventsToRender, { showSessionId: timelineScope === 'all' });
   }
 
   function renderAnalysisSummary(selectedSession: AnalysisArtifact['sessions'][number]) {
@@ -3177,6 +3203,7 @@ async function initApp() {
     updateExplorerSelection();
 
     if (analysis !== lastAnalysisRef) {
+      sessionRenderLimit = SESSION_RENDER_STEP;
       renderSessions(analysis.sessions);
       populateTimelineKinds();
       renderInsights();
@@ -3243,6 +3270,15 @@ async function initApp() {
 
   ui.sessionsList.addEventListener('click', (event) => {
     const target = event.target as HTMLElement | null;
+    const loadMore = target?.closest('[data-session-load-more]') as HTMLElement | null;
+    if (loadMore) {
+      if (analysis) {
+        sessionRenderLimit = Math.min(sessionRenderLimit + SESSION_RENDER_STEP, analysis.sessions.length);
+        renderSessions(analysis.sessions);
+        updateSessionSelection();
+      }
+      return;
+    }
     const row = target?.closest('[data-session-id]') as HTMLElement | null;
     const id = row?.getAttribute('data-session-id');
     if (!id) return;
@@ -3281,13 +3317,21 @@ async function initApp() {
 
   ui.timelineSearchInput.addEventListener('input', () => {
     timelineSearchQuery = ui.timelineSearchInput.value;
-    updateTimelineUI();
+    if (timelineSearchTimer) window.clearTimeout(timelineSearchTimer);
+    timelineSearchTimer = window.setTimeout(() => {
+      timelineSearchTimer = null;
+      updateTimelineUI();
+    }, 150);
   });
 
   ui.timelineSearchInput.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
       timelineSearchQuery = '';
       ui.timelineSearchInput.value = '';
+      if (timelineSearchTimer) {
+        window.clearTimeout(timelineSearchTimer);
+        timelineSearchTimer = null;
+      }
       updateTimelineUI();
     }
   });
