@@ -96,6 +96,308 @@ function matchDomainValue(value: string | undefined, domain: string): boolean {
   if (normalized === domain) return true;
   return normalized.endsWith(`.${domain}`) || domain.endsWith(`.${normalized}`);
 }
+
+type SuspiciousFeatureMatch = {
+  id: string;
+  title: string;
+  severity: 'low' | 'medium' | 'high';
+  confidence: 'low' | 'medium' | 'high';
+  scope: 'session' | 'capture';
+  session_id?: string;
+  evidence_frames: number[];
+  indicators: string[];
+  rationale: string;
+};
+
+type CommandSignature = {
+  id: string;
+  label: string;
+  category: 'user_creation' | 'privilege_change' | 'credential_access' | 'recon' | 'shell';
+  severity: 'low' | 'medium' | 'high';
+  confidence: 'low' | 'medium' | 'high';
+  regex: RegExp;
+  extract?: (match: RegExpMatchArray) => { username?: string; group?: string } | null;
+};
+
+type DomainStat = {
+  domain: string;
+  counts: DomainCounts;
+  frames: number[];
+  first_ts: number | null;
+  last_ts: number | null;
+};
+
+function uniqueNumbers(values: number[]): number[] {
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (const value of values) {
+    if (!Number.isFinite(value)) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
+function sessionEvidenceFrames(session: AnalysisArtifact['sessions'][number]): number[] {
+  return uniqueNumbers([
+    session.evidence.first_frame,
+    ...session.evidence.sample_frames,
+    session.evidence.last_frame,
+  ]);
+}
+
+function sessionPorts(session: AnalysisArtifact['sessions'][number]): number[] {
+  return [session.endpoints.a.port, session.endpoints.b.port].filter(
+    (p): p is number => typeof p === 'number' && Number.isFinite(p)
+  );
+}
+
+function protocolTokensForSession(session: AnalysisArtifact['sessions'][number]): Set<string> {
+  const tokens = new Set<string>();
+  for (const entry of session.protocols ?? []) {
+    for (const token of entry.chain.split(':')) {
+      const normalized = token.trim().toLowerCase();
+      if (normalized) tokens.add(normalized);
+    }
+  }
+  return tokens;
+}
+
+function isPrivateIp(ip: string): boolean {
+  if (!ip) return false;
+  if (ip.includes(':')) {
+    const normalized = ip.toLowerCase();
+    return normalized === '::1' || normalized.startsWith('fc') || normalized.startsWith('fd') || normalized.startsWith('fe80');
+  }
+  const parts = ip.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p))) return false;
+  const a = parts[0];
+  const b = parts[1];
+  if (a == null || b == null) return false;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  return false;
+}
+
+function timelineBySession(artifact: AnalysisArtifact): Map<string, AnalysisArtifact['timeline']> {
+  const map = new Map<string, AnalysisArtifact['timeline']>();
+  for (const event of artifact.timeline ?? []) {
+    const entry = map.get(event.session_id);
+    if (entry) {
+      entry.push(event);
+    } else {
+      map.set(event.session_id, [event]);
+    }
+  }
+  return map;
+}
+
+function extractDomainFromEvent(event: AnalysisArtifact['timeline'][number]): { domain: string; type: 'dns' | 'sni' | 'http' } | null {
+  if (event.kind === 'dns_query') {
+    const name = event.meta?.dns_name ?? event.summary.replace(/^DNS query:\s*/i, '').trim();
+    const domain = normalizeDomain(name);
+    return domain ? { domain, type: 'dns' } : null;
+  }
+  if (event.kind === 'tls_sni') {
+    const sni = event.meta?.sni ?? event.summary.replace(/^TLS SNI:\s*/i, '').trim();
+    const domain = normalizeDomain(sni);
+    return domain ? { domain, type: 'sni' } : null;
+  }
+  if (event.kind === 'http_request') {
+    const host =
+      event.meta?.http?.host ??
+      (() => {
+        const cleaned = event.summary.replace(/^HTTP request:\s*/i, '').trim();
+        const parts = cleaned.split(' ');
+        if (parts.length < 2) return '';
+        const hostAndPath = parts.slice(1).join(' ');
+        return hostAndPath.split('/')[0] ?? '';
+      })();
+    const domain = normalizeDomain(host || '');
+    return domain ? { domain, type: 'http' } : null;
+  }
+  return null;
+}
+
+function buildDomainStats(artifact: AnalysisArtifact): Map<string, DomainStat> {
+  const stats = new Map<string, DomainStat>();
+  for (const event of artifact.timeline ?? []) {
+    const extracted = extractDomainFromEvent(event);
+    if (!extracted) continue;
+    const { domain, type } = extracted;
+    const entry = stats.get(domain) ?? {
+      domain,
+      counts: { dns: 0, sni: 0, http: 0 },
+      frames: [],
+      first_ts: null,
+      last_ts: null,
+    };
+    entry.counts[type] += 1;
+    entry.frames.push(event.evidence_frame);
+    entry.first_ts = entry.first_ts == null ? event.ts : Math.min(entry.first_ts, event.ts);
+    entry.last_ts = entry.last_ts == null ? event.ts : Math.max(entry.last_ts, event.ts);
+    stats.set(domain, entry);
+  }
+  return stats;
+}
+
+function domainSuspicionScore(domain: string, counts: DomainCounts): { score: number; reasons: string[] } {
+  const normalized = normalizeDomain(domain);
+  const { labels, tld, sld } = domainLabels(normalized);
+  const domainCore = sld || labels[0] || normalized;
+  const digits = domainCore.replace(/\D/g, '').length;
+  const digitRatio = domainCore.length > 0 ? digits / domainCore.length : 0;
+  const hyphenCount = (domainCore.match(/-/g) ?? []).length;
+  const entropy = shannonEntropy(domainCore);
+  const punycode = normalized.includes('xn--');
+  const subdomainCount = Math.max(0, labels.length - 2);
+
+  let score = 0;
+  const reasons: string[] = [];
+
+  if (punycode) {
+    score += 2;
+    reasons.push('punycode label');
+  }
+  if (normalized.length > 30) {
+    score += 2;
+    reasons.push('long domain');
+  }
+  if (subdomainCount >= 4) {
+    score += 1;
+    reasons.push('many subdomains');
+  }
+  if (digitRatio > 0.4) {
+    score += 2;
+    reasons.push(`high digit ratio (${(digitRatio * 100).toFixed(0)}%)`);
+  } else if (digitRatio > 0.3) {
+    score += 1;
+    reasons.push(`elevated digit ratio (${(digitRatio * 100).toFixed(0)}%)`);
+  }
+  if (hyphenCount >= 3) {
+    score += 1;
+    reasons.push('multiple hyphens');
+  }
+  if (entropy >= 4.1) {
+    score += 2;
+    reasons.push('very high label entropy');
+  } else if (entropy >= 3.7) {
+    score += 1;
+    reasons.push('high label entropy');
+  }
+  if (tld && !COMMON_TLDS.has(tld)) {
+    score += 1;
+    reasons.push(`uncommon TLD .${tld}`);
+  }
+  if (counts.dns === 0 && counts.sni > 0) {
+    score += 1;
+    reasons.push('SNI without DNS');
+  }
+
+  return { score, reasons };
+}
+
+const COMMAND_SIGNATURES: CommandSignature[] = [
+  {
+    id: 'linux_adduser',
+    label: 'Linux adduser/useradd',
+    category: 'user_creation',
+    severity: 'high',
+    confidence: 'medium',
+    regex: /\b(adduser|useradd)\s+([^\s;]+)/i,
+    extract: (match) => ({ username: match[2] }),
+  },
+  {
+    id: 'windows_net_user_add',
+    label: 'Windows net user /add',
+    category: 'user_creation',
+    severity: 'high',
+    confidence: 'medium',
+    regex: /\bnet\s+user\s+([^\s]+)\s+\/add\b/i,
+    extract: (match) => ({ username: match[1] }),
+  },
+  {
+    id: 'powershell_new_localuser',
+    label: 'PowerShell New-LocalUser',
+    category: 'user_creation',
+    severity: 'high',
+    confidence: 'medium',
+    regex: /\bNew-LocalUser\b[^;\n\r]*?\s-Name\s+([^\s]+)/i,
+    extract: (match) => ({ username: match[1] }),
+  },
+  {
+    id: 'powershell_new_aduser',
+    label: 'PowerShell New-ADUser',
+    category: 'user_creation',
+    severity: 'high',
+    confidence: 'medium',
+    regex: /\bNew-ADUser\b[^;\n\r]*?\s-Name\s+([^\s]+)/i,
+    extract: (match) => ({ username: match[1] }),
+  },
+  {
+    id: 'net_localgroup_admin',
+    label: 'Add to local administrators group',
+    category: 'privilege_change',
+    severity: 'high',
+    confidence: 'medium',
+    regex: /\bnet\s+localgroup\s+administrators\s+([^\s]+)\s+\/add\b/i,
+    extract: (match) => ({ username: match[1], group: 'administrators' }),
+  },
+  {
+    id: 'etc_shadow_access',
+    label: 'Access /etc/shadow',
+    category: 'credential_access',
+    severity: 'high',
+    confidence: 'medium',
+    regex: /\/etc\/shadow/i,
+  },
+  {
+    id: 'etc_passwd_access',
+    label: 'Access /etc/passwd',
+    category: 'credential_access',
+    severity: 'medium',
+    confidence: 'medium',
+    regex: /\/etc\/passwd/i,
+  },
+  {
+    id: 'whoami',
+    label: 'whoami',
+    category: 'recon',
+    severity: 'low',
+    confidence: 'low',
+    regex: /\bwhoami\b/i,
+  },
+  {
+    id: 'finger',
+    label: 'finger',
+    category: 'recon',
+    severity: 'low',
+    confidence: 'low',
+    regex: /\bfinger\b/i,
+  },
+  {
+    id: 'shell_spawn',
+    label: 'Shell spawn',
+    category: 'shell',
+    severity: 'medium',
+    confidence: 'low',
+    regex: /\b(bash|sh|cmd|powershell)\b/i,
+  },
+  {
+    id: 'netcat',
+    label: 'Netcat usage',
+    category: 'shell',
+    severity: 'medium',
+    confidence: 'low',
+    regex: /\b(nc|netcat)\b/i,
+  },
+];
+
+const COMMAND_PREFILTER_REGEX = COMMAND_SIGNATURES.map((sig) => `(?:${sig.regex.source})`).join('|');
 function resolvePcapSession(context?: ChatContext, overrideId?: string) {
   const contextId = (context?.artifact as { pcap?: { session_id?: string } } | undefined)?.pcap?.session_id;
   const resolve = (id?: string) => (id ? getSession(id) : undefined);
@@ -929,6 +1231,723 @@ export function createTools(context?: ChatContext) {
           limitations: [
             'Heuristic assessment only.',
             'No external reputation or threat-intel sources used.',
+          ],
+        };
+      },
+    }),
+    suspicious_feature_check: tool({
+      description:
+        'Check the capture or a single session against a library of suspicious indicators (no external intel).',
+      inputSchema: z.object({
+        scope: z.enum(['capture', 'session']).optional(),
+        session_id: z.string().optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      execute: async ({ scope, session_id, limit }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+
+        const resolvedSessionId = session_id ?? context?.session_id ?? null;
+        const targetScope = scope ?? (resolvedSessionId ? 'session' : 'capture');
+        const sessionIndex = new Map(artifact.sessions.map((s) => [s.id, s] as const));
+        const sessionTimeline = timelineBySession(artifact);
+        const domainStats = buildDomainStats(artifact);
+
+        const matches: SuspiciousFeatureMatch[] = [];
+        const addMatch = (match: SuspiciousFeatureMatch) => {
+          matches.push(match);
+        };
+
+        const evidenceFromSessions = (sessionIds: string[], maxFrames = 12) => {
+          const frames: number[] = [];
+          const seen = new Set<number>();
+          for (const id of sessionIds) {
+            const session = sessionIndex.get(id);
+            if (!session) continue;
+            for (const frame of sessionEvidenceFrames(session)) {
+              if (seen.has(frame)) continue;
+              seen.add(frame);
+              frames.push(frame);
+              if (frames.length >= maxFrames) return frames;
+            }
+          }
+          return frames;
+        };
+
+        const evidenceFromDomains = (domains: DomainStat[], maxFrames = 12) => {
+          const frames: number[] = [];
+          const seen = new Set<number>();
+          for (const stat of domains) {
+            for (const frame of stat.frames) {
+              if (seen.has(frame)) continue;
+              seen.add(frame);
+              frames.push(frame);
+              if (frames.length >= maxFrames) return frames;
+            }
+          }
+          return frames;
+        };
+
+        const evaluateSession = (session: AnalysisArtifact['sessions'][number]) => {
+          const tokens = protocolTokensForSession(session);
+          const flags = new Set(session.rule_flags ?? []);
+          const ports = sessionPorts(session);
+          const portSet = new Set(ports);
+          const hasPort = (port: number) => portSet.has(port);
+          const hasAnyPort = (list: number[]) => list.some((port) => portSet.has(port));
+          const hasToken = (token: string) => tokens.has(token) || flags.has(token);
+          const hasSmb = hasToken('smb') || hasToken('smb2');
+          const hasNtlm = tokens.has('ntlmssp') || flags.has('ntlm');
+          const hasDcerpc = hasToken('dcerpc');
+          const hasSamr = hasToken('samr');
+          const hasLsarpc = hasToken('lsarpc');
+          const hasSrvsvc = hasToken('srvsvc');
+          const hasKerberos = hasToken('kerberos') || hasAnyPort([88, 464]);
+          const hasLdap = hasToken('ldap') || hasAnyPort([389, 636, 3268, 3269]);
+          const hasRdp = hasToken('rdp') || hasPort(3389);
+          const hasWinrm = hasToken('winrm') || hasAnyPort([5985, 5986]);
+          const hasVnc = hasToken('vnc') || hasAnyPort([5900, 5901, 5902, 5903]);
+          const hasTelnet = hasToken('telnet') || hasPort(23);
+          const hasFtp = hasToken('ftp') || hasPort(21);
+          const hasTftp = hasToken('tftp') || hasPort(69);
+          const hasSsh = hasToken('ssh') || hasPort(22);
+          const hasSnmp = hasToken('snmp') || hasPort(161);
+          const hasTls = hasToken('tls') || hasToken('ssl') || hasPort(443);
+          const hasIcmp = hasToken('icmp');
+
+          const evidenceFrames = sessionEvidenceFrames(session);
+          const events = sessionTimeline.get(session.id) ?? [];
+          const hasSni = events.some((e) => e.kind === 'tls_sni');
+          const duration = session.duration_seconds ?? Math.max(0, session.last_ts - session.first_ts);
+
+          if (hasSmb && hasNtlm) {
+            addMatch({
+              id: 'smb_ntlm_auth',
+              title: 'SMB with NTLM authentication',
+              severity: 'medium',
+              confidence: tokens.has('ntlmssp') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['SMB/SMB2 observed', 'NTLMSSP observed'],
+              rationale: 'SMB + NTLM authentication is often used in lateral movement and credential access workflows.',
+            });
+          }
+
+          if (hasSmb && hasDcerpc) {
+            addMatch({
+              id: 'smb_dcerpc',
+              title: 'SMB with RPC over IPC$',
+              severity: 'medium',
+              confidence: hasDcerpc ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['SMB/SMB2 observed', 'DCERPC observed'],
+              rationale: 'SMB transport carrying RPC traffic is commonly used for remote service control and enumeration.',
+            });
+          }
+
+          if (hasSamr) {
+            addMatch({
+              id: 'rpc_samr',
+              title: 'SAMR RPC interface access',
+              severity: 'medium',
+              confidence: 'medium',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['SAMR protocol observed'],
+              rationale: 'SAMR access can indicate account enumeration or password policy queries.',
+            });
+          }
+
+          if (hasLsarpc) {
+            addMatch({
+              id: 'rpc_lsarpc',
+              title: 'LSARPC interface access',
+              severity: 'medium',
+              confidence: 'medium',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['LSARPC protocol observed'],
+              rationale: 'LSARPC is used for policy and account queries; often seen in enumeration workflows.',
+            });
+          }
+
+          if (hasSrvsvc) {
+            addMatch({
+              id: 'rpc_srvsvc',
+              title: 'SRVSVC interface access',
+              severity: 'low',
+              confidence: 'medium',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['SRVSVC protocol observed'],
+              rationale: 'SRVSVC calls can enumerate shares or server info.',
+            });
+          }
+
+          if (hasSmb && ports.length && !ports.some((p) => p === 445 || p === 139)) {
+            addMatch({
+              id: 'smb_nonstandard_port',
+              title: 'SMB over non-standard port',
+              severity: 'medium',
+              confidence: 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: [`Ports: ${ports.join(', ')}`],
+              rationale: 'SMB on non-standard ports can indicate tunneling or evasive configuration.',
+            });
+          }
+
+          if (hasRdp) {
+            addMatch({
+              id: 'rdp_remote_desktop',
+              title: 'RDP remote desktop access',
+              severity: 'medium',
+              confidence: hasToken('rdp') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['RDP/3389 observed'],
+              rationale: 'RDP usage is sensitive and often leveraged for lateral movement.',
+            });
+          }
+
+          if (hasWinrm) {
+            addMatch({
+              id: 'winrm_remote_management',
+              title: 'WinRM remote management',
+              severity: 'medium',
+              confidence: hasToken('winrm') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['WinRM ports observed'],
+              rationale: 'WinRM can be used for remote command execution.',
+            });
+          }
+
+          if (hasVnc) {
+            addMatch({
+              id: 'vnc_remote_desktop',
+              title: 'VNC remote desktop access',
+              severity: 'medium',
+              confidence: hasToken('vnc') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['VNC ports observed'],
+              rationale: 'VNC access provides interactive remote control and is sensitive.',
+            });
+          }
+
+          if (hasTelnet) {
+            addMatch({
+              id: 'telnet_cleartext',
+              title: 'Telnet (cleartext) session',
+              severity: 'high',
+              confidence: hasToken('telnet') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['Telnet/23 observed'],
+              rationale: 'Telnet is unencrypted and often associated with insecure or legacy access.',
+            });
+          }
+
+          if (hasFtp) {
+            addMatch({
+              id: 'ftp_cleartext',
+              title: 'FTP (cleartext) session',
+              severity: 'medium',
+              confidence: hasToken('ftp') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['FTP/21 observed'],
+              rationale: 'FTP transmits credentials in cleartext and is frequently restricted.',
+            });
+          }
+
+          if (hasTftp) {
+            addMatch({
+              id: 'tftp_transfer',
+              title: 'TFTP transfer',
+              severity: 'medium',
+              confidence: hasToken('tftp') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['TFTP/69 observed'],
+              rationale: 'TFTP is commonly abused for malware staging and device config exfiltration.',
+            });
+          }
+
+          if (hasSsh) {
+            addMatch({
+              id: 'ssh_remote_admin',
+              title: 'SSH remote administration',
+              severity: 'low',
+              confidence: hasToken('ssh') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['SSH/22 observed'],
+              rationale: 'SSH provides remote access; verify against expected admin activity.',
+            });
+          }
+
+          if (hasKerberos) {
+            addMatch({
+              id: 'kerberos_auth',
+              title: 'Kerberos authentication traffic',
+              severity: 'low',
+              confidence: hasToken('kerberos') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['Kerberos ports observed'],
+              rationale: 'Kerberos is normal in AD environments but should align with expected hosts.',
+            });
+          }
+
+          if (hasLdap) {
+            addMatch({
+              id: 'ldap_directory',
+              title: 'LDAP directory access',
+              severity: 'low',
+              confidence: hasToken('ldap') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['LDAP ports observed'],
+              rationale: 'LDAP queries may indicate directory enumeration or normal auth traffic.',
+            });
+          }
+
+          if (hasSnmp) {
+            addMatch({
+              id: 'snmp_query',
+              title: 'SNMP activity',
+              severity: 'medium',
+              confidence: hasToken('snmp') ? 'medium' : 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['SNMP/161 observed'],
+              rationale: 'SNMP queries can expose device details or indicate network discovery.',
+            });
+          }
+
+          if (hasTls && !hasSni) {
+            addMatch({
+              id: 'tls_no_sni',
+              title: 'TLS without SNI',
+              severity: 'low',
+              confidence: 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['TLS observed', 'No SNI decoded'],
+              rationale: 'Missing SNI can be benign but is also used to reduce visibility.',
+            });
+          }
+
+          if (hasIcmp) {
+            addMatch({
+              id: 'icmp_activity',
+              title: 'ICMP activity',
+              severity: 'low',
+              confidence: 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['ICMP observed'],
+              rationale: 'ICMP can indicate scanning or diagnostics; validate against expected use.',
+            });
+          }
+
+          if (session.byte_count >= 5 * 1024 * 1024 && duration <= 2) {
+            addMatch({
+              id: 'high_volume_short',
+              title: 'High-volume burst in short duration',
+              severity: 'medium',
+              confidence: 'medium',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: [`${(session.byte_count / (1024 * 1024)).toFixed(1)} MB in ${duration.toFixed(2)}s`],
+              rationale: 'Large transfers over very short sessions can indicate staging or exfiltration bursts.',
+            });
+          }
+
+          if (session.byte_count >= 10 * 1024 * 1024) {
+            addMatch({
+              id: 'large_transfer',
+              title: 'Large data transfer',
+              severity: 'low',
+              confidence: 'medium',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: [`${(session.byte_count / (1024 * 1024)).toFixed(1)} MB total`],
+              rationale: 'Large transfers warrant verification against expected data movement.',
+            });
+          }
+
+          if (session.packet_count >= 1000) {
+            addMatch({
+              id: 'many_packets',
+              title: 'High packet volume',
+              severity: 'low',
+              confidence: 'medium',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: [`${session.packet_count} packets`],
+              rationale: 'High packet counts can indicate long-lived or chatty sessions.',
+            });
+          }
+
+          if (duration >= 3600) {
+            addMatch({
+              id: 'long_duration',
+              title: 'Long-duration session',
+              severity: 'low',
+              confidence: 'medium',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: [`${duration.toFixed(1)}s duration`],
+              rationale: 'Extended sessions can be legitimate but warrant review if unexpected.',
+            });
+          }
+
+          if (flags.has('non_tcp_udp')) {
+            addMatch({
+              id: 'non_tcp_udp',
+              title: 'Non-TCP/UDP transport',
+              severity: 'low',
+              confidence: 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: ['Non-TCP/UDP transport'],
+              rationale: 'Less common protocols can be misused for covert channels.',
+            });
+          }
+
+          const aPrivate = isPrivateIp(session.endpoints.a.ip);
+          const bPrivate = isPrivateIp(session.endpoints.b.ip);
+          if (aPrivate !== bPrivate) {
+            addMatch({
+              id: 'external_communication',
+              title: 'Internal to external communication',
+              severity: 'low',
+              confidence: 'low',
+              scope: 'session',
+              session_id: session.id,
+              evidence_frames: evidenceFrames,
+              indicators: [`${session.endpoints.a.ip} ↔ ${session.endpoints.b.ip}`],
+              rationale: 'Crossing the internal/external boundary should be validated for expected services.',
+            });
+          }
+        };
+
+        const evaluateCapture = () => {
+          const portUsage = new Map<string, Set<number>>();
+          const peerUsage = new Map<string, Set<string>>();
+
+          for (const session of artifact.sessions ?? []) {
+            const ports = sessionPorts(session).filter((p) => p <= 49151);
+            const a = session.endpoints.a.ip;
+            const b = session.endpoints.b.ip;
+            const portSetA = portUsage.get(a) ?? new Set<number>();
+            const portSetB = portUsage.get(b) ?? new Set<number>();
+            for (const port of ports) {
+              portSetA.add(port);
+              portSetB.add(port);
+            }
+            portUsage.set(a, portSetA);
+            portUsage.set(b, portSetB);
+
+            const peersA = peerUsage.get(a) ?? new Set<string>();
+            const peersB = peerUsage.get(b) ?? new Set<string>();
+            peersA.add(b);
+            peersB.add(a);
+            peerUsage.set(a, peersA);
+            peerUsage.set(b, peersB);
+          }
+
+          let maxPortIp: string | null = null;
+          let maxPortCount = 0;
+          for (const [ip, ports] of portUsage.entries()) {
+            if (ports.size > maxPortCount) {
+              maxPortCount = ports.size;
+              maxPortIp = ip;
+            }
+          }
+
+          if (maxPortIp && maxPortCount >= 20) {
+            addMatch({
+              id: 'multi_port_activity',
+              title: 'Single host touched many service ports',
+              severity: 'medium',
+              confidence: 'low',
+              scope: 'capture',
+              evidence_frames: evidenceFromSessions(
+                artifact.sessions
+                  .filter((s) => s.endpoints.a.ip === maxPortIp || s.endpoints.b.ip === maxPortIp)
+                  .map((s) => s.id)
+              ),
+              indicators: [`${maxPortIp} interacted with ${maxPortCount} service ports`],
+              rationale: 'Broad service coverage can indicate scanning or extensive admin activity.',
+            });
+          }
+
+          let maxPeerIp: string | null = null;
+          let maxPeerCount = 0;
+          for (const [ip, peers] of peerUsage.entries()) {
+            if (peers.size > maxPeerCount) {
+              maxPeerCount = peers.size;
+              maxPeerIp = ip;
+            }
+          }
+
+          if (maxPeerIp && maxPeerCount >= 20) {
+            addMatch({
+              id: 'multi_host_activity',
+              title: 'Single host talked to many peers',
+              severity: 'medium',
+              confidence: 'low',
+              scope: 'capture',
+              evidence_frames: evidenceFromSessions(
+                artifact.sessions
+                  .filter((s) => s.endpoints.a.ip === maxPeerIp || s.endpoints.b.ip === maxPeerIp)
+                  .map((s) => s.id)
+              ),
+              indicators: [`${maxPeerIp} communicated with ${maxPeerCount} hosts`],
+              rationale: 'High fan-out can indicate scanning, discovery, or central services.',
+            });
+          }
+
+          const domainEntries = Array.from(domainStats.values());
+          const longDns = domainEntries.filter((d) => d.counts.dns > 0 && d.domain.length >= 50);
+          if (longDns.length) {
+            addMatch({
+              id: 'dns_long_queries',
+              title: 'Unusually long DNS queries',
+              severity: 'medium',
+              confidence: 'low',
+              scope: 'capture',
+              evidence_frames: evidenceFromDomains(longDns),
+              indicators: longDns.slice(0, 5).map((d) => d.domain),
+              rationale: 'Long DNS names can indicate tunneling or encoded data.',
+            });
+          }
+
+          const highEntropy = domainEntries.filter((d) => {
+            const { score } = domainSuspicionScore(d.domain, d.counts);
+            return score >= 4;
+          });
+          if (highEntropy.length) {
+            addMatch({
+              id: 'suspicious_domains',
+              title: 'Domains with suspicious lexical patterns',
+              severity: 'medium',
+              confidence: 'low',
+              scope: 'capture',
+              evidence_frames: evidenceFromDomains(highEntropy),
+              indicators: highEntropy.slice(0, 5).map((d) => d.domain),
+              rationale: 'High-entropy or digit-heavy domains can indicate DGA or obfuscation.',
+            });
+          }
+
+          const sniWithoutDns = domainEntries.filter((d) => d.counts.sni > 0 && d.counts.dns === 0);
+          if (sniWithoutDns.length >= 2) {
+            addMatch({
+              id: 'sni_without_dns',
+              title: 'TLS SNI without DNS lookups',
+              severity: 'low',
+              confidence: 'low',
+              scope: 'capture',
+              evidence_frames: evidenceFromDomains(sniWithoutDns),
+              indicators: sniWithoutDns.slice(0, 5).map((d) => d.domain),
+              rationale: 'SNI without DNS can indicate hardcoded endpoints or bypassed resolution.',
+            });
+          }
+        };
+
+        if (targetScope === 'session') {
+          const session = resolvedSessionId ? sessionIndex.get(resolvedSessionId) : undefined;
+          if (!session) {
+            return { error: `Unknown session_id ${resolvedSessionId ?? 'unknown'}.` };
+          }
+          evaluateSession(session);
+        } else {
+          for (const session of artifact.sessions ?? []) {
+            evaluateSession(session);
+          }
+          evaluateCapture();
+        }
+
+        const severityRank = { high: 3, medium: 2, low: 1 };
+        const confidenceRank = { high: 3, medium: 2, low: 1 };
+        matches.sort((a, b) => {
+          const severityDelta = severityRank[b.severity] - severityRank[a.severity];
+          if (severityDelta !== 0) return severityDelta;
+          const confidenceDelta = confidenceRank[b.confidence] - confidenceRank[a.confidence];
+          if (confidenceDelta !== 0) return confidenceDelta;
+          return a.id.localeCompare(b.id);
+        });
+
+        const max = limit ?? 50;
+        return { total: matches.length, matches: matches.slice(0, max) };
+      },
+    }),
+    pcap_command_hunt: tool({
+      description:
+        'Scan TCP streams for shell commands and user/account creation activity (no external intel).',
+      inputSchema: z.object({
+        scope: z.enum(['capture', 'session']).optional(),
+        session_id: z.string().optional(),
+        max_streams: z.number().int().min(1).max(200).optional(),
+        max_matches: z.number().int().min(1).max(200).optional(),
+      }),
+      execute: async ({ scope, session_id, max_streams, max_matches }) => {
+        if (!artifact) {
+          return { error: 'No PCAP artifact available.' };
+        }
+
+        const targetScope = scope ?? (session_id || context?.session_id ? 'session' : 'capture');
+        const targetSessionId = session_id ?? context?.session_id ?? null;
+        const targetSession =
+          targetScope === 'session' && targetSessionId
+            ? artifact.sessions.find((s) => s.id === targetSessionId)
+            : undefined;
+
+        const resolved = resolvePcapSession(context, undefined);
+        if ('error' in resolved) {
+          return { error: resolved.error };
+        }
+
+        const streamList = await listTcpStreams(resolved.session, {
+          limit: max_streams ?? 60,
+        });
+
+        const filteredStreams = targetSession
+          ? streamList.streams.filter((stream) => {
+              const a = stream.endpoints.a;
+              const b = stream.endpoints.b;
+              const sa = targetSession.endpoints.a;
+              const sb = targetSession.endpoints.b;
+              const matchAB =
+                a.ip === sa.ip &&
+                b.ip === sb.ip &&
+                (sa.port == null || a.port === sa.port) &&
+                (sb.port == null || b.port === sb.port);
+              const matchBA =
+                a.ip === sb.ip &&
+                b.ip === sa.ip &&
+                (sb.port == null || a.port === sb.port) &&
+                (sa.port == null || b.port === sa.port);
+              return matchAB || matchBA;
+            })
+          : streamList.streams;
+
+        const matches: Array<{
+          stream_id: number;
+          endpoints: { a: { ip: string; port: number | null }; b: { ip: string; port: number | null } };
+          frame: number;
+          ts: number;
+          category: CommandSignature['category'];
+          indicator: string;
+          severity: CommandSignature['severity'];
+          confidence: CommandSignature['confidence'];
+          command: string;
+          extracted?: { username?: string; group?: string };
+        }> = [];
+
+        const userCandidates: Array<{
+          username: string;
+          stream_id: number;
+          frame: number;
+          command: string;
+        }> = [];
+
+        const seen = new Set<string>();
+        const totalLimit = max_matches ?? 80;
+
+        for (const stream of filteredStreams) {
+          if (matches.length >= totalLimit) break;
+          const result = await followTcpStream(resolved.session, stream.stream_id, {
+            contains: COMMAND_PREFILTER_REGEX,
+            matchMode: 'regex',
+            caseSensitive: false,
+            contextPackets: 1,
+            maxOutputSegments: 20,
+            maxBytesPerSegment: 2000,
+          });
+
+          if (!result.segments || result.segments.length === 0) continue;
+
+          for (const segment of result.segments) {
+            if (matches.length >= totalLimit) break;
+            const lines = segment.text
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter(Boolean);
+            for (const line of lines) {
+              if (matches.length >= totalLimit) break;
+              for (const signature of COMMAND_SIGNATURES) {
+                const match = line.match(signature.regex);
+                if (!match) continue;
+                const key = `${stream.stream_id}:${segment.frame}:${signature.id}:${line}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                const extracted = signature.extract ? signature.extract(match) ?? undefined : undefined;
+                matches.push({
+                  stream_id: stream.stream_id,
+                  endpoints: stream.endpoints,
+                  frame: segment.frame,
+                  ts: segment.ts,
+                  category: signature.category,
+                  indicator: signature.label,
+                  severity: signature.severity,
+                  confidence: signature.confidence,
+                  command: line.slice(0, 200),
+                  extracted,
+                });
+                if (extracted?.username) {
+                  userCandidates.push({
+                    username: extracted.username,
+                    stream_id: stream.stream_id,
+                    frame: segment.frame,
+                    command: line.slice(0, 200),
+                  });
+                }
+                break;
+              }
+            }
+          }
+        }
+
+        return {
+          scope: targetScope,
+          total_streams: streamList.total,
+          scanned_streams: filteredStreams.length,
+          total_matches: matches.length,
+          matches,
+          user_candidates: userCandidates,
+          notes: [
+            'Matches are based on ASCII payload reconstruction and may be truncated.',
+            'No external reputation or host telemetry is used.',
           ],
         };
       },

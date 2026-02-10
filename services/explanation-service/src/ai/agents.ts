@@ -16,11 +16,13 @@ const TOOL_GROUPS = {
     'pcap_top_talkers',
     'pcap_protocols',
     'pcap_search',
+    'suspicious_feature_check',
+    'pcap_command_hunt',
   ],
-  session: ['get_session', 'get_evidence_frames', 'pcap_sessions_query'],
-  timeline: ['get_timeline', 'search_timeline', 'pcap_timeline_range', 'pcap_event_kinds', 'pcap_search'],
-  domain: ['pcap_domains', 'pcap_session_domains', 'pcap_domain_sessions', 'domain_risk_assess'],
-  stream: ['pcap_tcp_streams', 'pcap_follow_tcp_stream', 'get_session', 'get_evidence_frames'],
+  session: ['get_session', 'get_evidence_frames', 'pcap_sessions_query', 'suspicious_feature_check', 'pcap_command_hunt'],
+  timeline: ['get_timeline', 'search_timeline', 'pcap_timeline_range', 'pcap_event_kinds', 'pcap_search', 'suspicious_feature_check', 'pcap_command_hunt'],
+  domain: ['pcap_domains', 'pcap_session_domains', 'pcap_domain_sessions', 'domain_risk_assess', 'suspicious_feature_check', 'pcap_command_hunt'],
+  stream: ['pcap_tcp_streams', 'pcap_follow_tcp_stream', 'get_session', 'get_evidence_frames', 'suspicious_feature_check', 'pcap_command_hunt'],
   summary: [],
 } as const satisfies Record<RouteName, readonly ToolName[]>;
 
@@ -57,6 +59,8 @@ const ACTION_TOOLS: Record<RouterPlanAction, readonly ToolName[]> = {
   risk_assess: ['domain_risk_assess'],
   list_streams: ['pcap_tcp_streams'],
   follow_stream: ['pcap_follow_tcp_stream'],
+  suspicious_feature_check: ['suspicious_feature_check'],
+  command_hunt: ['pcap_command_hunt'],
   suggested_next_steps: ['suggested_next_steps'],
 };
 

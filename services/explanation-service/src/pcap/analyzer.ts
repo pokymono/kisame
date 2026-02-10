@@ -309,6 +309,51 @@ export async function analyzeWithTshark(opts: AnalyzeOptions): Promise<AnalysisA
     if (s.byte_count >= 10 * 1024 * 1024) flags.push('large_bytes');
     if (s.transport === 'other') flags.push('non_tcp_udp');
 
+    const protocolTokens = new Set<string>();
+    for (const chain of Object.keys(s.protocol_chains)) {
+      for (const token of chain.split(':')) {
+        const normalized = token.trim().toLowerCase();
+        if (normalized) protocolTokens.add(normalized);
+      }
+    }
+    const hasToken = (token: string) => protocolTokens.has(token);
+    const ports = [s.endpoints.a.port, s.endpoints.b.port].filter(
+      (p): p is number => typeof p === 'number' && Number.isFinite(p)
+    );
+    const portSet = new Set(ports);
+    const hasPort = (port: number) => portSet.has(port);
+    const addFlag = (flag: string) => {
+      if (!flags.includes(flag)) flags.push(flag);
+    };
+
+    if (hasToken('smb') || hasToken('smb2') || hasPort(445) || hasPort(139)) addFlag('smb');
+    if (hasToken('ntlmssp')) addFlag('ntlm');
+    if (hasToken('dcerpc') || hasPort(135)) addFlag('dcerpc');
+    if (hasToken('samr')) addFlag('samr');
+    if (hasToken('lsarpc')) addFlag('lsarpc');
+    if (hasToken('srvsvc')) addFlag('srvsvc');
+    if (hasToken('kerberos') || hasPort(88) || hasPort(464)) addFlag('kerberos');
+    if (hasToken('ldap') || hasPort(389) || hasPort(636) || hasPort(3268) || hasPort(3269)) addFlag('ldap');
+    if (hasToken('rdp') || hasPort(3389)) addFlag('rdp');
+    if (hasToken('ssh') || hasPort(22)) addFlag('ssh');
+    if (hasToken('telnet') || hasPort(23)) addFlag('telnet');
+    if (hasToken('ftp') || hasPort(21)) addFlag('ftp');
+    if (hasToken('tftp') || hasPort(69)) addFlag('tftp');
+    if (hasToken('vnc') || hasPort(5900) || hasPort(5901) || hasPort(5902) || hasPort(5903)) addFlag('vnc');
+    if (hasToken('snmp') || hasPort(161)) addFlag('snmp');
+    if (hasToken('http')) addFlag('http');
+    if (hasToken('http2')) addFlag('http2');
+    if (hasToken('tls') || hasToken('ssl') || hasPort(443)) addFlag('tls');
+    if (hasToken('dns') || hasPort(53)) addFlag('dns');
+    if (hasToken('icmp')) addFlag('icmp');
+    if (hasPort(5985) || hasPort(5986)) addFlag('winrm');
+
+    if ((hasToken('smb') || hasToken('smb2')) && ports.length) {
+      const smbPorts = new Set([445, 139]);
+      const nonStandard = ports.some((p) => !smbPorts.has(p));
+      if (nonStandard) addFlag('smb_nonstandard_port');
+    }
+
     const protocolEntries = Object.entries(s.protocol_chains)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 8)

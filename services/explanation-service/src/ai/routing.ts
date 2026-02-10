@@ -22,6 +22,8 @@ export type RouterPlanAction =
   | 'risk_assess'
   | 'list_streams'
   | 'follow_stream'
+  | 'suspicious_feature_check'
+  | 'command_hunt'
   | 'suggested_next_steps';
 
 export type RouteDecision = {
@@ -86,6 +88,8 @@ export async function routeQuery(query: string, context?: ChatContext): Promise<
     'risk_assess',
     'list_streams',
     'follow_stream',
+    'suspicious_feature_check',
+    'command_hunt',
     'suggested_next_steps',
   ]);
 
@@ -138,10 +142,14 @@ Plan actions (choose 1-4, or [] for summary):
 - risk_assess (domain_risk_assess)
 - list_streams (pcap_tcp_streams)
 - follow_stream (pcap_follow_tcp_stream)
+- suspicious_feature_check (suspicious_feature_check)
+- command_hunt (pcap_command_hunt)
 - suggested_next_steps (suggested_next_steps)
 
 Choose actions that match the selected route (e.g., stream -> list_streams/follow_stream, domain -> list_domains/domain_sessions).
 For "suspicious" or "analyze this PCAP" style requests:
+- Include suspicious_feature_check when possible.
+- If the user asks about rogue users, user creation, or shell commands, include command_hunt.
 - If hasTcpSessions and totalTimelineEvents is low/zero, include list_streams and follow_stream.
 - If totalTimelineEvents is available, include timeline_search or timeline_range.
 Return route, confidence, reason, and next_actions.

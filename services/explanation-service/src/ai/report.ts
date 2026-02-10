@@ -4,10 +4,12 @@ import type { AnalysisArtifact } from '../types';
 
 const REPORT_SYSTEM_PROMPT = [
   'You are a senior incident responder writing a forensics report for a technical audience.',
+  'You are an agent: act autonomously and proactively reason from the provided artifact.',
   'Use only the provided analysis artifact. Do not invent evidence.',
   'Cite evidence frames when referencing specific events (use format: #<frame>).',
   'Structure the report with clear sections and concise bullet points.',
   'If data is missing, state it explicitly.',
+  'Include a Threat Assessment section with a verdict (Benign, Suspicious, Likely Malicious, or Inconclusive) and confidence (low/medium/high), grounded in evidence.',
 ].join(' ');
 
 export async function generateForensicReport(
@@ -15,7 +17,7 @@ export async function generateForensicReport(
 ): Promise<string> {
   const modelName = process.env.OPENAI_REPORT_MODEL ?? process.env.OPENAI_MODEL ?? 'gpt-5.2-codex';
   const reasoningSummary = process.env.KISAME_REASONING_SUMMARY ?? 'detailed';
-  const reasoningEffort = process.env.KISAME_REASONING_EFFORT ?? 'high';
+  const reasoningEffort = process.env.KISAME_REASONING_EFFORT ?? 'auto';
   const serviceTier = process.env.KISAME_SERVICE_TIER === 'flex' ? 'flex' : undefined;
 
   const agent = new ToolLoopAgent({
@@ -38,10 +40,11 @@ export async function generateForensicReport(
     '1) Executive Summary',
     '2) Capture Overview (file, time range, packets, sessions)',
     '3) Key Findings (bullets with evidence frames)',
-    '4) Session Summary (top 10 by bytes, include endpoints)',
-    '5) Timeline Highlights (top 15 events, include evidence frames)',
-    '6) Indicators (IPs, DNS, SNI, HTTP hosts)',
-    '7) Notes / Limitations',
+    '4) Threat Assessment (verdict + confidence + rationale)',
+    '5) Session Summary (top 10 by bytes, include endpoints)',
+    '6) Timeline Highlights (top 15 events, include evidence frames)',
+    '7) Indicators (IPs, DNS, SNI, HTTP hosts)',
+    '8) Notes / Limitations',
     '',
     '## Analysis Artifact (JSON)',
     JSON.stringify(artifact),

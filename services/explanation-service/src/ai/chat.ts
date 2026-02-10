@@ -129,6 +129,18 @@ function summarizeToolResults(results: Array<{ toolCallId: string; toolName: str
           toolName,
           summary: `pcap_event_kinds: ${output.total ?? 0} kinds`,
         };
+      case 'suspicious_feature_check':
+        return {
+          toolCallId,
+          toolName,
+          summary: `suspicious_feature_check: ${output.total ?? 0} matches`,
+        };
+      case 'pcap_command_hunt':
+        return {
+          toolCallId,
+          toolName,
+          summary: `pcap_command_hunt: ${output.total_matches ?? 0} matches`,
+        };
       case 'get_evidence_frames':
         return {
           toolCallId,
