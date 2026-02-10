@@ -786,10 +786,109 @@ async function initApp() {
   };
 
   const buildReportHtml = (markdown: string) => {
-    const escaped = markdown
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    const escapeHtml = (input: string) =>
+      input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const lines = markdown.split('\n');
+    const html: string[] = [];
+    let inList = false;
+    let inTable = false;
+    let tableBuffer: string[] = [];
+
+    const flushList = () => {
+      if (inList) {
+        html.push('</ul>');
+        inList = false;
+      }
+    };
+
+    const flushTable = () => {
+      if (!inTable) return;
+      const rows = tableBuffer.map((row) =>
+        row
+          .split('|')
+          .slice(1, -1)
+          .map((cell) => cell.trim())
+      );
+      if (rows.length >= 2) {
+        const header = rows[0];
+        const body = rows.slice(2);
+        html.push('<table>');
+        html.push('<thead><tr>');
+        for (const cell of header) {
+          html.push(`<th>${escapeHtml(cell)}</th>`);
+        }
+        html.push('</tr></thead>');
+        html.push('<tbody>');
+        for (const row of body) {
+          html.push('<tr>');
+          for (const cell of row) {
+            html.push(`<td>${escapeHtml(cell)}</td>`);
+          }
+          html.push('</tr>');
+        }
+        html.push('</tbody></table>');
+      }
+      tableBuffer = [];
+      inTable = false;
+    };
+
+    const isTableSeparator = (line: string) => /^\|\s*-{3,}/.test(line);
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const raw = lines[i] ?? '';
+      const line = raw.trimEnd();
+      if (!line) {
+        flushList();
+        flushTable();
+        continue;
+      }
+
+      if (line.startsWith('|') && line.endsWith('|')) {
+        inTable = true;
+        tableBuffer.push(line);
+        continue;
+      }
+
+      if (inTable && isTableSeparator(line)) {
+        tableBuffer.push(line);
+        continue;
+      }
+
+      flushTable();
+
+      if (line.startsWith('### ')) {
+        flushList();
+        html.push(`<h3>${escapeHtml(line.slice(4))}</h3>`);
+        continue;
+      }
+      if (line.startsWith('## ')) {
+        flushList();
+        html.push(`<h2>${escapeHtml(line.slice(3))}</h2>`);
+        continue;
+      }
+      if (line.startsWith('# ')) {
+        flushList();
+        html.push(`<h1>${escapeHtml(line.slice(2))}</h1>`);
+        continue;
+      }
+      if (line.startsWith('- ')) {
+        if (!inList) {
+          html.push('<ul>');
+          inList = true;
+        }
+        html.push(`<li>${escapeHtml(line.slice(2))}</li>`);
+        continue;
+      }
+
+      flushList();
+      html.push(`<p>${escapeHtml(line)}</p>`);
+    }
+
+    flushList();
+    flushTable();
+
+    const bodyHtml = html.join('\n');
 
     return `<!doctype html>
 <html>
@@ -797,17 +896,84 @@ async function initApp() {
     <meta charset="utf-8" />
     <title>Kisame Report</title>
     <style>
-      body { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; margin: 32px; color: #0e1114; }
-      h1,h2,h3 { font-family: "IBM Plex Sans", Arial, sans-serif; margin: 24px 0 8px; }
-      h1 { font-size: 22px; }
-      h2 { font-size: 16px; text-transform: uppercase; letter-spacing: 0.08em; }
-      table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 12px; }
-      th, td { border: 1px solid #d0d4d9; padding: 6px 8px; text-align: left; }
-      pre { white-space: pre-wrap; font-size: 11px; line-height: 1.5; }
+      :root {
+        --ink: #0c0f12;
+        --muted: #60666f;
+        --line: #d5dae0;
+        --panel: #f6f7f9;
+        --accent: #3c7f7f;
+      }
+      body {
+        font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+        margin: 40px 48px;
+        color: var(--ink);
+        background: white;
+        line-height: 1.55;
+      }
+      h1 {
+        font-size: 26px;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        margin: 0 0 18px;
+      }
+      h2 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+        margin: 28px 0 8px;
+      }
+      h3 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.14em;
+        margin: 20px 0 6px;
+      }
+      p {
+        margin: 6px 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      ul {
+        margin: 6px 0 12px 16px;
+        padding: 0;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      li { margin: 4px 0; }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 10px 0 16px;
+        font-size: 11px;
+        background: var(--panel);
+      }
+      th, td {
+        border: 1px solid var(--line);
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      th {
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        font-size: 10px;
+        color: var(--ink);
+        background: #eef1f5;
+      }
+      @page {
+        margin: 18mm;
+      }
+      .footer {
+        margin-top: 36px;
+        font-size: 10px;
+        color: var(--muted);
+      }
     </style>
   </head>
   <body>
-    <pre>${escaped}</pre>
+    ${bodyHtml}
+    <div class="footer">Generated by Kisame • Forensic export</div>
   </body>
 </html>`;
   };
