@@ -16,6 +16,7 @@ export type CaptureInterface = {
 
 export type LiveCapture = {
   id: string;
+  ownerId?: string;
   interfaceId: string;
   interfaceName: string;
   fileName: string;
@@ -107,6 +108,7 @@ export type StartCaptureOptions = {
   maxPackets?: number;
   fileName?: string;
   captureFilter?: string;
+  ownerId?: string;
 };
 
 export async function startLiveCapture(opts: StartCaptureOptions): Promise<LiveCapture> {
@@ -157,6 +159,7 @@ export async function startLiveCapture(opts: StartCaptureOptions): Promise<LiveC
   });
   const liveCapture: LiveCapture = {
     id,
+    ownerId: opts.ownerId,
     interfaceId: iface.id,
     interfaceName: iface.name,
     fileName: safeName,
@@ -213,12 +216,18 @@ export async function startLiveCapture(opts: StartCaptureOptions): Promise<LiveC
   return liveCapture;
 }
 
-export async function stopLiveCapture(captureId: string): Promise<{
+export async function stopLiveCapture(
+  captureId: string,
+  ownerId?: string
+): Promise<{
   session: PcapSession;
   exitCode: number;
 }> {
   const capture = activeCaptures.get(captureId);
   if (!capture) {
+    throw new Error('Unknown capture_id');
+  }
+  if (ownerId && capture.ownerId && capture.ownerId !== ownerId) {
     throw new Error('Unknown capture_id');
   }
 
@@ -250,6 +259,7 @@ export async function stopLiveCapture(captureId: string): Promise<{
     fileName: capture.fileName,
     filePath: capture.filePath,
     sizeBytes,
+    ownerId: capture.ownerId ?? ownerId,
   });
 
   logInfo('capture.stop.complete', { capture_id: captureId, session_id: session.id, exit_code: exitCode });

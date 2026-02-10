@@ -21,7 +21,7 @@ export interface ElectronAPI {
     chrome: string;
     electron: string;
   };
-  openPcapAndAnalyze: () => Promise<
+  openPcapAndAnalyze: (clientId?: string) => Promise<
     | { canceled: true }
     | { canceled: false; pcapPath: string; analysis: unknown }
   >;

@@ -52,7 +52,7 @@ async function handleRequest(req: Request): Promise<Response> {
     } else if (method === 'POST' && pathname === '/pcap') {
       response = await handlePcapUpload(req);
     } else if (method === 'GET' && pathname === '/pcap/list') {
-      response = await handlePcapList();
+      response = await handlePcapList(req);
     } else if (method === 'GET' && pathname === '/capture/interfaces') {
       response = await handleListCaptureInterfaces();
     } else if (method === 'POST' && pathname === '/capture/start') {
@@ -61,10 +61,10 @@ async function handleRequest(req: Request): Promise<Response> {
       response = await handleStopLiveCapture(req);
     } else if (method === 'GET' && pathname.startsWith('/capture/')) {
       const id = pathname.split('/')[2] || '';
-      response = await handleGetLiveCapture(id);
+      response = await handleGetLiveCapture(req, id);
     } else if (method === 'GET' && pathname.startsWith('/pcap/')) {
       const id = pathname.split('/')[2] || '';
-      response = await handlePcapGet(id);
+      response = await handlePcapGet(req, id);
     } else if (method === 'POST' && pathname === '/tools/analyzePcap') {
       response = await handleAnalyzePcap(req);
     } else if (method === 'POST' && pathname === '/explain/session') {

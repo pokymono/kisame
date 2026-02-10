@@ -1,4 +1,3 @@
-// Preload script for secure communication between main and renderer processes
 import { contextBridge, ipcRenderer } from 'electron';
 
 type ChatQueryResult = {
@@ -17,14 +16,13 @@ type UploadProgressEvent = {
 };
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // Add your exposed APIs here
   platform: process.platform,
   versions: {
     node: process.versions.node,
     chrome: process.versions.chrome,
     electron: process.versions.electron,
   },
-  openPcapAndAnalyze: () => ipcRenderer.invoke('kisame:openPcapAndAnalyze'),
+  openPcapAndAnalyze: (clientId?: string) => ipcRenderer.invoke('kisame:openPcapAndAnalyze', clientId),
   sendChatQuery: (query: string, context?: { session_id?: string; artifact?: unknown }) =>
     ipcRenderer.invoke('kisame:sendChatQuery', query, context) as Promise<ChatQueryResult>,
   getBackendUrl: () => ipcRenderer.invoke('kisame:getBackendUrl') as Promise<string>,
@@ -36,7 +34,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('kisame:uploadProgress', listener);
   },
   
-  // Terminal APIs (multi-instance)
   terminal: {
     create: (cols: number, rows: number) => 
       ipcRenderer.invoke('terminal:create', cols, rows) as Promise<{ success: boolean; id: string; error?: string }>,

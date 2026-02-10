@@ -4,7 +4,7 @@ function buildCorsHeaders(): HeadersInit {
   return {
     'access-control-allow-origin': DEFAULT_CORS_ORIGIN,
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type, x-filename',
+    'access-control-allow-headers': 'content-type, x-filename, x-client-id',
     'access-control-max-age': '86400',
   };
 }

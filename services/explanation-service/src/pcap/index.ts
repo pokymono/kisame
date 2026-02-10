@@ -3,6 +3,7 @@ export {
   storePcap,
   registerPcapFile,
   getSession,
+  getSessionForOwner,
   listSessions,
 } from './session-manager';
 export { analyzeWithTshark, getTsharkInfo } from './analyzer';

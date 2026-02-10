@@ -5,6 +5,7 @@ import {
   stopLiveCapture,
   getLiveCapture,
 } from '../pcap';
+import { getClientId } from '../utils/client';
 
 export async function handleListCaptureInterfaces(): Promise<Response> {
   try {
@@ -27,12 +28,14 @@ export async function handleStartLiveCapture(req: Request): Promise<Response> {
     | null;
 
   try {
+    const ownerId = getClientId(req);
     const capture = await startLiveCapture({
       interfaceId: body?.interface,
       durationSeconds: body?.duration_seconds,
       maxPackets: body?.max_packets,
       fileName: body?.file_name,
       captureFilter: body?.capture_filter,
+      ownerId,
     });
 
     return json({
@@ -57,7 +60,8 @@ export async function handleStopLiveCapture(req: Request): Promise<Response> {
   }
 
   try {
-    const result = await stopLiveCapture(body.capture_id);
+    const ownerId = getClientId(req);
+    const result = await stopLiveCapture(body.capture_id, ownerId);
     return json({
       capture_id: body.capture_id,
       status: 'stopped',
@@ -72,9 +76,10 @@ export async function handleStopLiveCapture(req: Request): Promise<Response> {
   }
 }
 
-export async function handleGetLiveCapture(captureId: string): Promise<Response> {
+export async function handleGetLiveCapture(req: Request, captureId: string): Promise<Response> {
+  const ownerId = getClientId(req);
   const capture = getLiveCapture(captureId);
-  if (!capture) {
+  if (!capture || (capture.ownerId && capture.ownerId !== ownerId)) {
     return json({ error: 'Unknown capture_id' }, { status: 404 });
   }
   return json({

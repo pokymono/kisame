@@ -174,6 +174,24 @@ async function initApp() {
   const workspaceStorageKey = 'kisame.workspaces';
   const workspaceSelectedKey = 'kisame.workspace.selected';
   const workspaceAssignmentKey = 'kisame.workspace.assignments';
+  const clientIdKey = 'kisame.client.id';
+
+  const resolveClientId = (): string => {
+    const stored = window.localStorage.getItem(clientIdKey);
+    if (stored) return stored;
+    const generated =
+      globalThis.crypto?.randomUUID?.() ??
+      `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    window.localStorage.setItem(clientIdKey, generated);
+    return generated;
+  };
+
+  const clientId = resolveClientId();
+  const withClientHeaders = (headers: HeadersInit = {}) => {
+    const next = new Headers(headers);
+    next.set('x-client-id', clientId);
+    return next;
+  };
 
   const loadWorkspaces = (): Workspace[] => {
     const raw = window.localStorage.getItem(workspaceStorageKey);
@@ -953,7 +971,9 @@ async function initApp() {
 
   async function refreshExplorerCaptures() {
     try {
-      const res = await fetch(`${explanationBaseUrl}/pcap/list`);
+      const res = await fetch(`${explanationBaseUrl}/pcap/list`, {
+        headers: withClientHeaders(),
+      });
       if (!res.ok) {
         if (res.status === 404) {
           explorerCaptures = [];
@@ -1018,7 +1038,7 @@ async function initApp() {
     await ensureBackendTsharkAvailable();
     const res = await fetch(`${explanationBaseUrl}/tools/analyzePcap`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: withClientHeaders({ 'content-type': 'application/json' }),
       body: JSON.stringify({ session_id: sessionId }),
     });
     if (!res.ok) {
@@ -1061,7 +1081,7 @@ async function initApp() {
     try {
       const res = await fetch(`${explanationBaseUrl}/explain/session`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: withClientHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify({ artifact: analysis, session_id: sessionId }),
       });
       if (!res.ok) return;
@@ -1105,7 +1125,7 @@ async function initApp() {
         ((import.meta as any).env?.VITE_CAPTURE_INTERFACE as string | undefined) ?? undefined;
       const res = await fetch(`${explanationBaseUrl}/capture/start`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: withClientHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify({
           interface: preferredInterface,
         }),
@@ -1147,7 +1167,7 @@ async function initApp() {
     try {
       const stopRes = await fetch(`${explanationBaseUrl}/capture/stop`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: withClientHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify({ capture_id: captureId }),
       });
       if (!stopRes.ok) {
@@ -1161,7 +1181,7 @@ async function initApp() {
 
       const analyzeRes = await fetch(`${explanationBaseUrl}/tools/analyzePcap`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: withClientHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify({ session_id: stopData.session_id }),
       });
       if (!analyzeRes.ok) {
@@ -1862,7 +1882,7 @@ async function initApp() {
     ui.openPcapButton.textContent = '◈ ANALYZING…';
     ui.openPcapButton.classList.add('opacity-60');
     try {
-      const result = await window.electronAPI.openPcapAndAnalyze();
+      const result = await window.electronAPI.openPcapAndAnalyze(clientId);
       if (result.canceled) return;
       analysis = result.analysis as AnalysisArtifact;
       captureSessionId = analysis.pcap?.session_id ?? null;
@@ -1946,7 +1966,7 @@ async function initApp() {
     try {
       const response = await fetch(`${explanationBaseUrl}/chat/stream`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: withClientHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify({ query: query, context }),
         signal: chatAbortController.signal,
       });

@@ -1,9 +1,10 @@
 import { json } from '../utils/response';
 import { logInfo, logWarn, logError, toErrorMeta } from '../utils/logger';
 import { ConcurrencyLimiter, QueueFullError } from '../utils/concurrency';
-import { storePcap, getSession, listSessions, analyzeWithTshark, getTsharkInfo, explainSession } from '../pcap';
+import { storePcap, getSessionForOwner, listSessions, analyzeWithTshark, getTsharkInfo, explainSession } from '../pcap';
 import type { AnalysisArtifact } from '../types';
 import type { AnalyzeOptions } from '../pcap/analyzer';
+import { getClientId } from '../utils/client';
 
 const analyzeLimiter = new ConcurrencyLimiter(
   Number(process.env.ANALYZE_MAX_CONCURRENCY ?? 3),
@@ -66,7 +67,8 @@ export async function handlePcapUpload(req: Request): Promise<Response> {
   const buf = new Uint8Array(await req.arrayBuffer());
   logInfo('pcap.upload.start', { file_name: fileName, size_bytes: buf.byteLength });
   
-  const session = await storePcap(fileName, buf);
+  const ownerId = getClientId(req);
+  const session = await storePcap(fileName, buf, ownerId);
   logInfo('pcap.upload.complete', { session_id: session.id, file_name: session.fileName, size_bytes: session.sizeBytes });
   
   return json({
@@ -76,8 +78,9 @@ export async function handlePcapUpload(req: Request): Promise<Response> {
   });
 }
 
-export function handlePcapGet(sessionId: string): Response {
-  const session = getSession(sessionId);
+export function handlePcapGet(req: Request, sessionId: string): Response {
+  const ownerId = getClientId(req);
+  const session = getSessionForOwner(sessionId, ownerId);
   if (!session) {
     logWarn('pcap.get.missing', { session_id: sessionId });
     return json({ error: 'Unknown session_id' }, { status: 404 });
@@ -90,8 +93,9 @@ export function handlePcapGet(sessionId: string): Response {
   });
 }
 
-export function handlePcapList(): Response {
-  const sessions = listSessions();
+export function handlePcapList(req: Request): Response {
+  const ownerId = getClientId(req);
+  const sessions = listSessions(ownerId);
   return json({
     total: sessions.length,
     sessions: sessions.map((session) => ({
@@ -113,7 +117,8 @@ export async function handleAnalyzePcap(req: Request): Promise<Response> {
     return json({ error: 'Expected JSON body: { session_id }' }, { status: 400 });
   }
   
-  const session = getSession(sessionId);
+  const ownerId = getClientId(req);
+  const session = getSessionForOwner(sessionId, ownerId);
   if (!session) {
     logWarn('pcap.analyze.missing', { session_id: sessionId });
     return json({ error: 'Unknown session_id' }, { status: 404 });
