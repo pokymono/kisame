@@ -88,13 +88,42 @@ async function initApp() {
   const tabActiveClass =
     `${tabButtonBase} text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/30`;
   const tabInactiveClass = `${tabButtonBase} text-white/50 hover:text-white/80`;
+  let terminalNavHighlightTimer: number | null = null;
 
   function setTabButtonState(button: HTMLButtonElement, isActive: boolean) {
     button.className = isActive ? tabActiveClass : tabInactiveClass;
   }
 
+  function resetTerminalNavHighlight() {
+    if (terminalNavHighlightTimer !== null) {
+      window.clearTimeout(terminalNavHighlightTimer);
+      terminalNavHighlightTimer = null;
+    }
+    const terminalIcon = ui.navTerminalButton.querySelector('svg');
+    ui.navTerminalButton.classList.remove('bg-[var(--accent-teal)]/10', 'border-[var(--accent-teal)]/40');
+    ui.navTerminalButton.classList.add('border-transparent');
+    terminalIcon?.classList.remove('text-[var(--accent-teal)]');
+    terminalIcon?.classList.add('text-white/40');
+  }
+
+  function flashTerminalNavHighlight() {
+    resetTerminalNavHighlight();
+    const terminalIcon = ui.navTerminalButton.querySelector('svg');
+    ui.navTerminalButton.classList.add('bg-[var(--accent-teal)]/10', 'border-[var(--accent-teal)]/40');
+    ui.navTerminalButton.classList.remove('border-transparent');
+    terminalIcon?.classList.remove('text-white/40');
+    terminalIcon?.classList.add('text-[var(--accent-teal)]');
+    terminalNavHighlightTimer = window.setTimeout(() => {
+      terminalNavHighlightTimer = null;
+      resetTerminalNavHighlight();
+    }, 700);
+  }
+
   function setActiveTab(tab: AppTab) {
     activeTab = tab;
+    if (tab !== 'analyze') {
+      resetTerminalNavHighlight();
+    }
     setTabButtonState(ui.navCaptureButton, tab === 'capture');
     setTabButtonState(ui.navAnalyzeButton, tab === 'analyze');
     setTabButtonState(ui.navExportButton, tab === 'export');
