@@ -232,7 +232,7 @@ function renderReasoningSummary(summary: string, isStreaming?: boolean): HTMLEle
   });
 
   wrapper.append(content);
-  const markdown = `**Reasoning summary:** ${summary}`;
+  const markdown = `${summary}`;
   renderMarkdown(content, markdown, Boolean(isStreaming));
   if (isStreaming) {
     content.classList.add('typing-cursor');
