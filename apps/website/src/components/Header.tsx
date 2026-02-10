@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { DownloadButtons } from './DownloadButtons';
 
 export function Header() {
     const [scrolled, setScrolled] = useState(false);
@@ -31,7 +32,7 @@ export function Header() {
 
                 <div className="header-actions">
                     <a href="#" className="btn btn-ghost">Sign in</a>
-                    <a href="#download" className="btn btn-primary">Download</a>
+                    <DownloadButtons className="download-actions--header" showIcon={false} />
                 </div>
             </div>
         </header>

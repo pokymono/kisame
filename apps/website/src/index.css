@@ -235,6 +235,7 @@ a:hover {
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .nav-link {
@@ -281,6 +282,25 @@ a:hover {
   display: flex;
   gap: 1rem;
   margin-bottom: 4rem;
+}
+
+.download-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.download-actions--hero {
+  justify-content: center;
+}
+
+.download-actions--footer {
+  justify-content: center;
+}
+
+.download-actions--header {
+  gap: 0.5rem;
 }
 
 .app-preview {
@@ -579,6 +599,15 @@ a:hover {
   }
 
   .hero-actions .btn {
+    width: 100%;
+  }
+
+  .download-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .download-actions .btn {
     width: 100%;
   }
 

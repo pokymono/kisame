@@ -68,6 +68,18 @@ export async function routeQuery(query: string, context?: ChatContext): Promise<
   const modelName = process.env.OPENAI_ROUTER_MODEL ?? process.env.OPENAI_MODEL ?? 'gpt-5.2';
   const model = openai(modelName);
   const signals = getRoutingSignals(context);
+  const lowerQuery = query.toLowerCase();
+  const isSuspiciousQuery = /suspicious|malicious|threat|rogue|intrusion|attack|compromise|exfil|lateral|beacon|mimikatz|psexec|credential|unauthor/i.test(
+    lowerQuery
+  );
+  const isBroadQuery =
+    isGlobalQuestion(query) ||
+    /overview|summary|thorough|analy(?:ze|sis)|what is happening|what happened|investigat/i.test(lowerQuery);
+  const explicitSearch =
+    lowerQuery.includes('search') ||
+    lowerQuery.includes('find') ||
+    lowerQuery.includes('keyword') ||
+    lowerQuery.includes('query');
 
   if (!signals.hasArtifact) {
     return { route: 'summary', reason: 'No capture context available.', confidence: 'high', next_actions: [] };
@@ -174,11 +186,42 @@ ${query}`;
         next_actions: [],
       };
     }
+
+    let nextActions = output.next_actions ?? [];
+    const ensure = (action: RouterPlanAction) => {
+      if (!nextActions.includes(action)) nextActions.push(action);
+    };
+    const remove = (action: RouterPlanAction) => {
+      if (nextActions.includes(action)) {
+        nextActions = nextActions.filter((a) => a !== action);
+      }
+    };
+
+    if (isBroadQuery) {
+      ensure('overview');
+    }
+    if (isSuspiciousQuery) {
+      ensure('suspicious_feature_check');
+      if (signals.hasTcpSessions) {
+        ensure('command_hunt');
+      }
+    }
+    if ((isSuspiciousQuery || isBroadQuery) && signals.totalTimelineEvents > 0) {
+      ensure('timeline_range');
+    }
+    if ((isSuspiciousQuery || isBroadQuery) && !explicitSearch) {
+      remove('timeline_search');
+    }
+    if ((isSuspiciousQuery || isBroadQuery) && signals.totalTimelineEvents === 0 && signals.hasTcpSessions) {
+      ensure('list_streams');
+      ensure('follow_stream');
+    }
+
     return {
       route: output.route,
       reason: output.reason,
       confidence: output.confidence,
-      next_actions: output.next_actions ?? [],
+      next_actions: nextActions,
     };
   } catch (error) {
     logWarn('ai.route.error', { error: toErrorMeta(error) });
