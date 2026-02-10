@@ -604,6 +604,10 @@
   touch-action: none;
 }
 
+.welcome-visible .resize-handle {
+  display: none !important;
+}
+
 @media (max-width: 1400px) {
   .main-grid-responsive {
     --explorer-w: 240px;

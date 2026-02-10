@@ -1038,6 +1038,7 @@ async function initApp() {
 
   function setWelcomeVisible(visible: boolean) {
     ui.welcomePanel.classList.toggle('hidden', !visible);
+    document.body.classList.toggle('welcome-visible', visible);
   }
 
   function setAnalysisDetail(text: string) {
