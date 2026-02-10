@@ -405,7 +405,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   const analysisHeader = el('div', {
     className:
-      'flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
+      'analysis-header flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[var(--app-line)] bg-[var(--app-surface)]/30',
   });
 
   const screenTabs = el('div', { className: 'flex items-center gap-1 flex-wrap min-w-0' });
