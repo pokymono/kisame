@@ -844,7 +844,12 @@ export function createTools(context?: ChatContext) {
         if ('error' in resolved) {
           return { error: resolved.error };
         }
-        return listTcpStreams(resolved.session, { limit, maxPackets: max_packets });
+        try {
+          return await listTcpStreams(resolved.session, { limit, maxPackets: max_packets });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { error: message };
+        }
       },
     }),
     pcap_follow_tcp_stream: tool({
@@ -894,22 +899,27 @@ export function createTools(context?: ChatContext) {
         }
         const normalizeRange = (value?: number) => (typeof value === 'number' && value > 0 ? value : undefined);
         const normalizedContains = typeof contains === 'string' ? contains.trim() : undefined;
-        return followTcpStream(resolved.session, stream_id, {
-          maxBytesPerDirection: max_bytes_per_direction,
-          maxCombinedBytes: max_combined_bytes,
-          maxSegments: max_segments,
-          maxBytesPerSegment: max_bytes_per_segment,
-          maxOutputSegments: max_output_segments,
-          direction,
-          contains: normalizedContains || undefined,
-          matchMode: match_mode,
-          caseSensitive: case_sensitive,
-          contextPackets: context_packets,
-          startFrame: normalizeRange(start_frame),
-          endFrame: normalizeRange(end_frame),
-          startTs: normalizeRange(start_ts),
-          endTs: normalizeRange(end_ts),
-        });
+        try {
+          return await followTcpStream(resolved.session, stream_id, {
+            maxBytesPerDirection: max_bytes_per_direction,
+            maxCombinedBytes: max_combined_bytes,
+            maxSegments: max_segments,
+            maxBytesPerSegment: max_bytes_per_segment,
+            maxOutputSegments: max_output_segments,
+            direction,
+            contains: normalizedContains || undefined,
+            matchMode: match_mode,
+            caseSensitive: case_sensitive,
+            contextPackets: context_packets,
+            startFrame: normalizeRange(start_frame),
+            endFrame: normalizeRange(end_frame),
+            startTs: normalizeRange(start_ts),
+            endTs: normalizeRange(end_ts),
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { error: message };
+        }
       },
     }),
     pcap_session_domains: tool({
@@ -1837,9 +1847,15 @@ export function createTools(context?: ChatContext) {
           return { error: resolved.error };
         }
 
-        const streamList = await listTcpStreams(resolved.session, {
-          limit: max_streams ?? 60,
-        });
+        let streamList: Awaited<ReturnType<typeof listTcpStreams>>;
+        try {
+          streamList = await listTcpStreams(resolved.session, {
+            limit: max_streams ?? 60,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return { error: message };
+        }
 
         const filteredStreams = targetSession
           ? streamList.streams.filter((stream) => {
@@ -1886,14 +1902,20 @@ export function createTools(context?: ChatContext) {
 
         for (const stream of filteredStreams) {
           if (matches.length >= totalLimit) break;
-          const result = await followTcpStream(resolved.session, stream.stream_id, {
-            contains: COMMAND_PREFILTER_REGEX,
-            matchMode: 'regex',
-            caseSensitive: false,
-            contextPackets: 1,
-            maxOutputSegments: 20,
-            maxBytesPerSegment: 2000,
-          });
+          let result: Awaited<ReturnType<typeof followTcpStream>>;
+          try {
+            result = await followTcpStream(resolved.session, stream.stream_id, {
+              contains: COMMAND_PREFILTER_REGEX,
+              matchMode: 'regex',
+              caseSensitive: false,
+              contextPackets: 1,
+              maxOutputSegments: 20,
+              maxBytesPerSegment: 2000,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return { error: message };
+          }
 
           if (!result.segments || result.segments.length === 0) continue;
 

@@ -138,11 +138,57 @@ function bytesToPrintableAscii(bytes: Uint8Array, maxBytes?: number): {
   return { text, bytesUsed: limit, truncated: limit < bytes.length };
 }
 
-async function runTshark(args: string[]): Promise<string> {
+function emptyDirections(): FollowTcpStreamResult['directions'] {
+  return [
+    { from: 'a', to: 'b', bytes: 0, text: '', truncated: false },
+    { from: 'b', to: 'a', bytes: 0, text: '', truncated: false },
+  ];
+}
+
+function buildDirections(
+  a: { bytes: number; text: string; truncated: boolean },
+  b: { bytes: number; text: string; truncated: boolean }
+): FollowTcpStreamResult['directions'] {
+  return [
+    { from: 'a', to: 'b', bytes: a.bytes, text: a.text, truncated: a.truncated },
+    { from: 'b', to: 'a', bytes: b.bytes, text: b.text, truncated: b.truncated },
+  ];
+}
+
+async function runTshark(
+  args: string[],
+  opts?: { timeoutMs?: number; label?: string }
+): Promise<string> {
   const proc = Bun.spawn(args, { stdout: 'pipe', stderr: 'pipe' });
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
+  const timeoutMs = Math.max(
+    1000,
+    Number(process.env.KISAME_TSHARK_TIMEOUT_MS ?? '') || opts?.timeoutMs || 20000
+  );
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    try {
+      proc.kill();
+    } catch {
+      // Best-effort kill.
+    }
+  }, timeoutMs);
+
+  const stdoutPromise = new Response(proc.stdout).text();
+  const stderrPromise = new Response(proc.stderr).text();
+  const [stdout, stderr, exitCode] = await Promise.all([stdoutPromise, stderrPromise, proc.exited]).finally(() => {
+    clearTimeout(timeout);
+  });
+
+  if (timedOut) {
+    logError('tshark.stream.timeout', {
+      label: opts?.label ?? 'tshark',
+      timeout_ms: timeoutMs,
+      stderr_preview: stderr.slice(0, 200),
+    });
+    throw new Error(`tshark timed out after ${timeoutMs}ms. Try increasing KISAME_TSHARK_TIMEOUT_MS.`);
+  }
+
   if (exitCode !== 0) {
     logError('tshark.stream.error', { exit_code: exitCode, stderr_preview: stderr.slice(0, 400) });
     throw new Error(
@@ -150,6 +196,72 @@ async function runTshark(args: string[]): Promise<string> {
     );
   }
   return stdout;
+}
+
+function parseFollowAsciiOutput(output: string): { endpoints?: { a: Endpoint; b: Endpoint }; text: string } {
+  const lines = output.split('\n');
+  let nodeA: Endpoint | null = null;
+  let nodeB: Endpoint | null = null;
+  const dataLines: string[] = [];
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line) continue;
+    if (line.startsWith('=====')) continue;
+    if (line.startsWith('Follow:')) continue;
+    if (line.startsWith('Filter:')) continue;
+    if (line.startsWith('Node ')) {
+      const match = line.match(/^Node\s+\d+:\s+(.+)$/);
+      if (!match) continue;
+      const endpoint = match[1]?.trim();
+      if (!endpoint) continue;
+      const bracketed = endpoint.match(/^\[(.+)\]:(\d+)$/);
+      if (bracketed) {
+        const ip = bracketed[1] ?? '';
+        const port = Number(bracketed[2]);
+        if (!nodeA) nodeA = { ip, port: Number.isFinite(port) ? port : null };
+        else if (!nodeB) nodeB = { ip, port: Number.isFinite(port) ? port : null };
+        continue;
+      }
+      const lastColon = endpoint.lastIndexOf(':');
+      if (lastColon > 0) {
+        const ip = endpoint.slice(0, lastColon);
+        const port = Number(endpoint.slice(lastColon + 1));
+        const parsed = { ip, port: Number.isFinite(port) ? port : null };
+        if (!nodeA) nodeA = parsed;
+        else if (!nodeB) nodeB = parsed;
+      }
+      continue;
+    }
+    dataLines.push(raw);
+  }
+
+  return {
+    endpoints: nodeA && nodeB ? { a: nodeA, b: nodeB } : undefined,
+    text: dataLines.join('\n').trim(),
+  };
+}
+
+async function runTsharkFollowAscii(
+  session: PcapSession,
+  streamId: number
+): Promise<{ endpoints?: { a: Endpoint; b: Endpoint }; text: string }> {
+  const tsharkPath = resolveTsharkPath();
+  if (!tsharkPath) {
+    throw new Error('tshark was not found. Install Wireshark or set TSHARK_PATH to the tshark binary.');
+  }
+
+  const args: string[] = [
+    tsharkPath,
+    '-r',
+    session.filePath,
+    '-n',
+    '-q',
+    '-z',
+    `follow,tcp,ascii,${streamId}`,
+  ];
+  const stdout = await runTshark(args, { timeoutMs: 20000, label: 'stream.follow.ascii' });
+  return parseFollowAsciiOutput(stdout);
 }
 
 export async function listTcpStreams(session: PcapSession, opts?: {
@@ -163,6 +275,10 @@ export async function listTcpStreams(session: PcapSession, opts?: {
 
   const args: string[] = [
     tsharkPath,
+    '-o',
+    'tcp.desegment_tcp_streams:TRUE',
+    '-o',
+    'tcp.desegment_tcp_data:TRUE',
     '-r',
     session.filePath,
     '-n',
@@ -202,7 +318,7 @@ export async function listTcpStreams(session: PcapSession, opts?: {
   if (opts?.maxPackets && opts.maxPackets > 0) args.push('-c', String(opts.maxPackets));
 
   logInfo('tshark.stream.list.start', { session_id: session.id, file_name: session.fileName });
-  const stdout = await runTshark(args);
+  const stdout = await runTshark(args, { timeoutMs: 15000, label: 'stream.list' });
   const lines = stdout.split('\n').filter((l) => l.length);
   if (lines.length === 0) return { total: 0, streams: [] };
 
@@ -263,7 +379,13 @@ export async function listTcpStreams(session: PcapSession, opts?: {
   entries.sort((a, b) => (a.first_ts !== b.first_ts ? a.first_ts - b.first_ts : a.stream_id - b.stream_id));
 
   const max = opts?.limit ?? 50;
-  return { total: entries.length, streams: entries.slice(0, max) };
+  const result = { total: entries.length, streams: entries.slice(0, max) };
+  logInfo('tshark.stream.list.complete', {
+    session_id: session.id,
+    total_streams: result.total,
+    returned: result.streams.length,
+  });
+  return result;
 }
 
 export async function followTcpStream(
@@ -331,10 +453,45 @@ export async function followTcpStream(
   ];
 
   logInfo('tshark.stream.follow.start', { session_id: session.id, stream_id: streamId });
-  const stdout = await runTshark(args);
+  const stdout = await runTshark(args, { timeoutMs: 20000, label: 'stream.follow' });
   const lines = stdout.split('\n').filter((l) => l.length);
   if (lines.length === 0) {
-    return {
+    const fallback = await runTsharkFollowAscii(session, streamId);
+    if (fallback.text) {
+      const endpoints = fallback.endpoints ?? { a: { ip: '', port: null }, b: { ip: '', port: null } };
+      const result = {
+        stream_id: streamId,
+        endpoints,
+        payload_frames: 0,
+        payload_bytes: 0,
+        combined_text: fallback.text,
+        combined_bytes: fallback.text.length,
+        combined_truncated: false,
+        directions: emptyDirections(),
+        segments: [],
+        segments_truncated: false,
+        match: opts?.contains
+          ? {
+              query: opts.contains,
+              mode: opts.matchMode ?? 'substring',
+              case_sensitive: Boolean(opts.caseSensitive),
+              context_packets: opts.contextPackets ?? 0,
+            }
+          : undefined,
+        notes: ['Fallback follow,tcp,ascii used (no tcp.payload frames decoded).'],
+      };
+      logInfo('tshark.stream.follow.complete', {
+        session_id: session.id,
+        stream_id: streamId,
+        payload_frames: 0,
+        payload_bytes: 0,
+        combined_truncated: false,
+        segments: 0,
+      });
+      return result;
+    }
+
+    const result = {
       stream_id: streamId,
       endpoints: { a: { ip: '', port: null }, b: { ip: '', port: null } },
       payload_frames: 0,
@@ -342,10 +499,7 @@ export async function followTcpStream(
       combined_text: '',
       combined_bytes: 0,
       combined_truncated: false,
-      directions: [
-        { from: 'a', to: 'b', bytes: 0, text: '', truncated: false },
-        { from: 'b', to: 'a', bytes: 0, text: '', truncated: false },
-      ],
+      directions: emptyDirections(),
       segments: [],
       segments_truncated: false,
       match: opts?.contains
@@ -358,6 +512,13 @@ export async function followTcpStream(
         : undefined,
       notes: ['No payload frames found for this stream.'],
     };
+    logInfo('tshark.stream.follow.complete', {
+      session_id: session.id,
+      stream_id: streamId,
+      payload_frames: 0,
+      payload_bytes: 0,
+    });
+    return result;
   }
 
   const header = parseTsvLine(lines[0]!).map((h) => h.trim());
@@ -396,7 +557,42 @@ export async function followTcpStream(
   }
 
   if (payloadRows.length === 0) {
-    return {
+    const fallback = await runTsharkFollowAscii(session, streamId);
+    if (fallback.text) {
+      const endpoints = fallback.endpoints ?? { a: { ip: '', port: null }, b: { ip: '', port: null } };
+      const result = {
+        stream_id: streamId,
+        endpoints,
+        payload_frames: 0,
+        payload_bytes: 0,
+        combined_text: fallback.text,
+        combined_bytes: fallback.text.length,
+        combined_truncated: false,
+        directions: emptyDirections(),
+        segments: [],
+        segments_truncated: false,
+        match: opts?.contains
+          ? {
+              query: opts.contains,
+              mode: opts.matchMode ?? 'substring',
+              case_sensitive: Boolean(opts.caseSensitive),
+              context_packets: opts.contextPackets ?? 0,
+            }
+          : undefined,
+        notes: ['Fallback follow,tcp,ascii used (no tcp.payload frames decoded).'],
+      };
+      logInfo('tshark.stream.follow.complete', {
+        session_id: session.id,
+        stream_id: streamId,
+        payload_frames: 0,
+        payload_bytes: 0,
+        combined_truncated: false,
+        segments: 0,
+      });
+      return result;
+    }
+
+    const result = {
       stream_id: streamId,
       endpoints: { a: { ip: '', port: null }, b: { ip: '', port: null } },
       payload_frames: 0,
@@ -404,10 +600,7 @@ export async function followTcpStream(
       combined_text: '',
       combined_bytes: 0,
       combined_truncated: false,
-      directions: [
-        { from: 'a', to: 'b', bytes: 0, text: '', truncated: false },
-        { from: 'b', to: 'a', bytes: 0, text: '', truncated: false },
-      ],
+      directions: emptyDirections(),
       segments: [],
       segments_truncated: false,
       match: opts?.contains
@@ -420,6 +613,13 @@ export async function followTcpStream(
         : undefined,
       notes: ['No payload frames found for this stream.'],
     };
+    logInfo('tshark.stream.follow.complete', {
+      session_id: session.id,
+      stream_id: streamId,
+      payload_frames: 0,
+      payload_bytes: 0,
+    });
+    return result;
   }
 
   const endpoints = {
@@ -619,7 +819,7 @@ export async function followTcpStream(
     if (matchIndexes.size > selected.length) segmentsTruncated = true;
   }
 
-  return {
+  const result = {
     stream_id: streamId,
     endpoints,
     payload_frames: payloadRows.length,
@@ -627,10 +827,7 @@ export async function followTcpStream(
     combined_text: combinedParts.join('').trimStart(),
     combined_bytes: combinedBytes,
     combined_truncated: combinedTruncated,
-    directions: [
-      { from: 'a', to: 'b', bytes: dirA.bytes, text: dirA.text, truncated: dirA.truncated },
-      { from: 'b', to: 'a', bytes: dirB.bytes, text: dirB.text, truncated: dirB.truncated },
-    ],
+    directions: buildDirections(dirA, dirB),
     segments: segments.length ? segments : undefined,
     segments_truncated: segments.length ? segmentsTruncated : undefined,
     match: opts?.contains
@@ -643,4 +840,14 @@ export async function followTcpStream(
       : undefined,
     notes: notes.length ? notes : undefined,
   };
+
+  logInfo('tshark.stream.follow.complete', {
+    session_id: session.id,
+    stream_id: streamId,
+    payload_frames: result.payload_frames,
+    payload_bytes: result.payload_bytes,
+    combined_truncated: result.combined_truncated,
+    segments: result.segments?.length ?? 0,
+  });
+  return result;
 }
