@@ -2167,6 +2167,7 @@ async function initApp() {
   
   const terminals: Map<string, TerminalInstance> = new Map();
   let activeTerminalId: string | null = null;
+  let activeSplitTerminalId: string | null = null;
   let terminalCounter = 0;
 
   function createTerminalTab(instance: TerminalInstance): HTMLElement {
@@ -2212,42 +2213,81 @@ async function initApp() {
   function switchToTerminal(id: string) {
     const instance = terminals.get(id);
     if (!instance) return;
-    
-    // Hide all terminal containers
-    for (const t of terminals.values()) {
-      t.container.classList.add('hidden');
+
+    if (activeSplitTerminalId && !terminals.has(activeSplitTerminalId)) {
+      activeSplitTerminalId = null;
     }
-    
-    // Show selected terminal
-    instance.container.classList.remove('hidden');
-    activeTerminalId = id;
+
+    // In split mode, clicking the right pane tab swaps pane focus.
+    if (activeSplitTerminalId && id === activeSplitTerminalId) {
+      const previousActiveId = activeTerminalId;
+      activeTerminalId = id;
+      if (previousActiveId && previousActiveId !== id && terminals.has(previousActiveId)) {
+        activeSplitTerminalId = previousActiveId;
+      } else {
+        activeSplitTerminalId = null;
+      }
+    } else {
+      activeTerminalId = id;
+    }
+
+    if (!activeSplitTerminalId) {
+      ui.terminalContainer.style.display = 'block';
+      ui.terminalContainer.style.gridTemplateColumns = '';
+
+      for (const t of terminals.values()) {
+        t.container.classList.add('hidden');
+        t.container.style.position = 'absolute';
+        t.container.style.inset = '0';
+      }
+
+      instance.container.classList.remove('hidden');
+    } else {
+      ui.terminalContainer.style.display = 'grid';
+      ui.terminalContainer.style.gridTemplateColumns = '1fr 1fr';
+
+      for (const [tid, t] of terminals) {
+        if (tid === activeTerminalId || tid === activeSplitTerminalId) {
+          t.container.classList.remove('hidden');
+          t.container.style.position = 'relative';
+          t.container.style.inset = '';
+        } else {
+          t.container.classList.add('hidden');
+        }
+      }
+    }
     updateTabStyles();
-    
-    // Focus and fit
+
     setTimeout(() => {
       instance.fitAddon.fit();
       instance.terminal.focus();
     }, 10);
   }
 
-  async function createNewTerminal(): Promise<string | null> {
+  async function createNewTerminal(isSplitCreation = false): Promise<string | null> {
     if (!window.electronAPI?.terminal) return null;
     
     terminalCounter++;
-    const name = `bash ${terminalCounter}`;
+    // Fallback name logic if needed, but default shell is automatic
+    const name = `term ${terminalCounter}`;
     
     // Create container for this terminal
     const container = document.createElement('div');
-    container.className = 'absolute inset-0';
+    if (activeSplitTerminalId || isSplitCreation) {
+       container.className = 'relative min-h-0 min-w-0 bg-[#2c2f33]';
+       container.style.position = 'relative';
+    } else {
+       container.className = 'absolute inset-0';
+    }
     ui.terminalContainer.appendChild(container);
     
     // Create xterm instance
     const terminal = new Terminal({
       theme: {
-        background: '#0d1117',
+        background: '#2c2f33',
         foreground: '#c9d1d9',
         cursor: '#58a6ff',
-        cursorAccent: '#0d1117',
+        cursorAccent: '#2c2f33',
         selectionBackground: '#264f78',
         black: '#484f58',
         red: '#ff7b72',
@@ -2323,11 +2363,11 @@ async function initApp() {
     });
     resizeObserver.observe(container);
     
-    // Switch to this terminal
-    switchToTerminal(id);
-    
-    // Fit after a small delay
-    setTimeout(() => fitAddon.fit(), 50);
+    if (!isSplitCreation) {
+      switchToTerminal(id);
+    } else {
+      setTimeout(() => fitAddon.fit(), 50);
+    }
     
     return id;
   }
@@ -2349,16 +2389,32 @@ async function initApp() {
     // Remove from map
     terminals.delete(id);
     
-    // If this was active, switch to another
+    if (activeSplitTerminalId === id) {
+      activeSplitTerminalId = null;
+    }
     if (activeTerminalId === id) {
-      const remaining = Array.from(terminals.keys());
-      if (remaining.length > 0) {
-        switchToTerminal(remaining[remaining.length - 1]);
-      } else {
-        activeTerminalId = null;
-        // Create a new terminal if all closed
-        void createNewTerminal();
+      activeTerminalId = null;
+    }
+
+    if (activeSplitTerminalId && !activeTerminalId) {
+      activeTerminalId = activeSplitTerminalId;
+      activeSplitTerminalId = null;
+    }
+
+    if (activeSplitTerminalId && activeSplitTerminalId === activeTerminalId) {
+      activeSplitTerminalId = null;
+    }
+
+    const remaining = Array.from(terminals.keys());
+    if (remaining.length > 0) {
+      if (!activeTerminalId || !terminals.has(activeTerminalId)) {
+        activeTerminalId = remaining[remaining.length - 1];
       }
+      switchToTerminal(activeTerminalId);
+    } else {
+      activeTerminalId = null;
+      activeSplitTerminalId = null;
+      void createNewTerminal();
     }
   }
 
@@ -2399,11 +2455,85 @@ async function initApp() {
     terminalIcon?.classList.add('text-[var(--accent-teal)]');
   });
 
-  // Make terminal container relative for absolute positioning of terminal instances
+  // Make terminal container relative/grid
   ui.terminalContainer.style.position = 'relative';
 
   // Initialize first terminal on load
   void createNewTerminal();
+
+  // Keyboard Shortcuts
+  window.addEventListener('keydown', (e) => {
+    // Ctrl + Shift + ` (Backtick)
+    if (e.ctrlKey && e.shiftKey && e.code === 'Backquote') {
+      e.preventDefault();
+      void createNewTerminal();
+    }
+  });
+
+  // Toggle Maximize
+  let isMaximized = false;
+  ui.terminalMaximizeButton.addEventListener('click', () => {
+    isMaximized = !isMaximized;
+    if (isMaximized) {
+      ui.terminalPanel.classList.add('fixed', 'inset-0', 'z-[100]', 'bg-[#0d1117]');
+      ui.terminalPanel.classList.remove('h-full', 'min-w-0', 'border-t');
+      // Keep flex layout
+    } else {
+      ui.terminalPanel.classList.remove('fixed', 'inset-0', 'z-[100]', 'bg-[#0d1117]');
+      ui.terminalPanel.classList.add('h-full', 'min-w-0', 'border-t');
+    }
+    // Refit terminals
+    if (activeTerminalId) {
+      setTimeout(() => terminals.get(activeTerminalId!)?.fitAddon.fit(), 50);
+    }
+    if (activeSplitTerminalId) {
+      setTimeout(() => terminals.get(activeSplitTerminalId!)?.fitAddon.fit(), 50);
+    }
+  });
+
+  // Split View Logic
+  async function toggleSplit() {
+    if (activeSplitTerminalId) {
+      // Close split
+      closeTerminal(activeSplitTerminalId);
+      return;
+    }
+    
+    // Open split
+    terminals.forEach(t => t.container.classList.add('hidden')); // temp hide
+    ui.terminalContainer.style.display = 'grid';
+    ui.terminalContainer.style.gridTemplateColumns = '1fr 1fr';
+    
+    // Left is current active
+    if (activeTerminalId) {
+       const t1 = terminals.get(activeTerminalId);
+       if (t1) {
+         t1.container.style.position = 'relative';
+         t1.container.classList.remove('hidden');
+         t1.fitAddon.fit();
+       }
+    }
+    
+    // Create new right terminal
+    const newId = await createNewTerminal(true); // true = automated/split creation
+    if (newId) {
+      activeSplitTerminalId = newId;
+      const t2 = terminals.get(newId);
+      if (t2) {
+        t2.container.style.position = 'relative';
+        t2.container.classList.remove('hidden');
+        // Fit happens in create
+      }
+    } else if (activeTerminalId) {
+      // Restore single terminal layout if split creation fails.
+      activeSplitTerminalId = null;
+      switchToTerminal(activeTerminalId);
+    }
+  }
+
+  ui.terminalSplitButton.addEventListener('click', () => {
+    void toggleSplit();
+  });
 
   setActiveTab(activeTab);
   render();

@@ -63,6 +63,8 @@ export type AppShellRefs = {
   terminalPanel: HTMLElement;
   terminalTabsContainer: HTMLElement;
   terminalAddButton: HTMLButtonElement;
+  terminalSplitButton: HTMLButtonElement;
+  terminalMaximizeButton: HTMLButtonElement;
   terminalContainer: HTMLElement;
   sessionKeyPanel: HTMLElement;
   insightsPanel: HTMLElement;
@@ -795,15 +797,27 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   // Add terminal button
   const terminalAddButton = el('button', {
     className: 'flex items-center justify-center size-6 rounded hover:bg-white/10 text-white/40 hover:text-white/70 transition-colors',
-    attrs: { type: 'button', title: 'New Terminal' },
+    attrs: { type: 'button', title: 'New Terminal (Ctrl+Shift+`)' },
   }) as HTMLButtonElement;
   terminalAddButton.innerHTML = `<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>`;
 
-  terminalHeader.append(terminalTabsContainer, terminalAddButton);
+  const terminalSplitButton = el('button', {
+    className: 'flex items-center justify-center size-6 rounded hover:bg-white/10 text-white/40 hover:text-white/70 transition-colors',
+    attrs: { type: 'button', title: 'Split Terminal' },
+  }) as HTMLButtonElement;
+  terminalSplitButton.innerHTML = `<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`;
+
+  const terminalMaximizeButton = el('button', {
+    className: 'flex items-center justify-center size-6 rounded hover:bg-white/10 text-white/40 hover:text-white/70 transition-colors',
+    attrs: { type: 'button', title: 'Maximize' },
+  }) as HTMLButtonElement;
+  terminalMaximizeButton.innerHTML = `<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>`;
+
+  terminalHeader.append(terminalTabsContainer, terminalAddButton, terminalSplitButton, terminalMaximizeButton);
 
   // Container for xterm.js - removed padding, full height
   const terminalContainer = el('div', {
-    className: 'flex-1 min-h-0 overflow-hidden bg-[#0d1117]',
+    className: 'flex-1 min-h-0 overflow-hidden bg-[#2c2f33] relative',
     attrs: { id: 'terminal-container' },
   });
 
@@ -1319,6 +1333,8 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     terminalPanel,
     terminalTabsContainer,
     terminalAddButton,
+    terminalSplitButton,
+    terminalMaximizeButton,
     terminalContainer,
     sessionKeyPanel,
     insightsPanel,

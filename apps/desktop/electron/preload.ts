@@ -38,8 +38,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // Terminal APIs (multi-instance)
   terminal: {
-    create: (cols: number, rows: number) => 
-      ipcRenderer.invoke('terminal:create', cols, rows) as Promise<{ success: boolean; id: string; error?: string }>,
+    listShells: () => ipcRenderer.invoke('terminal:listShells') as Promise<{ label: string; path: string }[]>,
+    create: (cols: number, rows: number, shellPath?: string) => 
+      ipcRenderer.invoke('terminal:create', cols, rows, shellPath) as Promise<{ success: boolean; id: string; error?: string }>,
     write: (id: string, data: string) => ipcRenderer.invoke('terminal:write', id, data),
     resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', id, cols, rows),
     kill: (id: string) => ipcRenderer.invoke('terminal:kill', id),

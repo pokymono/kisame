@@ -324,51 +324,92 @@ const ptyProcesses: Map<string, pty.IPty> = new Map();
 let mainWindow: BrowserWindow | null = null;
 let terminalIdCounter = 0;
 
-ipcMain.handle(
-  'terminal:create',
-  (_event, cols: number, rows: number): { success: boolean; id: string; error?: string } => {
-  const id = `term-${++terminalIdCounter}`;
-  const baseShell = (() => {
-    if (process.platform === 'win32') {
-      const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
-      const powershell = `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-      return existsSync(powershell) ? powershell : 'powershell.exe';
-    }
+function detectShells(): { label: string; path: string }[] {
+  const shells: { label: string; path: string }[] = [];
+  
+  if (process.platform === 'win32') {
+    const sysRoot = process.env.SystemRoot ?? 'C:\\Windows';
+    
+    // PowerShell
+    const ps = path.join(sysRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    if (existsSync(ps)) shells.push({ label: 'PowerShell', path: ps });
+    
+    // Cmd
+    const cmd = path.join(sysRoot, 'System32', 'cmd.exe');
+    if (existsSync(cmd)) shells.push({ label: 'Command Prompt', path: cmd });
+
+    // PowerShell Core (pwsh)
+    const progFiles = process.env.ProgramFiles ?? 'C:\\Program Files';
+    const pwsh = path.join(progFiles, 'PowerShell', '7', 'pwsh.exe');
+    if (existsSync(pwsh)) shells.push({ label: 'PowerShell Core', path: pwsh });
+    
+    // Git Bash
+    const gitBash = path.join(progFiles, 'Git', 'bin', 'bash.exe');
+    if (existsSync(gitBash)) shells.push({ label: 'Git Bash', path: gitBash });
+
+    // WSL (simple detection)
+    const wsl = path.join(sysRoot, 'System32', 'wsl.exe');
+    if (existsSync(wsl)) shells.push({ label: 'WSL', path: wsl });
+  } else {
+    // Linux/Mac
     const candidates = [
-      process.env.SHELL,
-      '/bin/zsh',
-      '/bin/bash',
-      '/bin/sh',
-    ].filter(Boolean) as string[];
-    for (const candidate of candidates) {
-      try {
-        accessSync(candidate, fsConstants.X_OK);
-        return candidate;
-      } catch {
-        continue;
+      { label: 'Bash', path: '/bin/bash' },
+      { label: 'Zsh', path: '/bin/zsh' },
+      { label: 'Fish', path: '/usr/bin/fish' },
+      { label: 'Sh', path: '/bin/sh' },
+    ];
+    
+    if (process.platform === 'darwin') {
+       candidates.push({ label: 'Zsh (User)', path: '/usr/local/bin/zsh' });
+       candidates.push({ label: 'Bash (User)', path: '/usr/local/bin/bash' });
+    }
+
+    for (const c of candidates) {
+      if (existsSync(c.path)) {
+        shells.push(c);
       }
     }
-    return '/bin/sh';
-  })();
+    
+    // Check /etc/shells as fallback/addition could be parsed here
+    if (shells.length === 0) {
+      shells.push({ label: 'Default', path: '/bin/sh' });
+    }
+  }
+  
+  return shells;
+}
+
+ipcMain.handle('terminal:listShells', () => {
+  return detectShells();
+});
+
+ipcMain.handle(
+  'terminal:create',
+  (_event, cols: number, rows: number, shellPath?: string): { success: boolean; id: string; error?: string } => {
+  const id = `term-${++terminalIdCounter}`;
 
   const preferredCwd = os.homedir() || process.env.HOME || process.cwd();
   const cwdCandidates = Array.from(new Set([
     existsSync(preferredCwd) ? preferredCwd : undefined,
-    process.cwd(),
-    '/',
+    existsSync(process.cwd()) ? process.cwd() : undefined,
+    process.platform === 'win32' ? 'C:\\' : '/',
   ].filter(Boolean))) as string[];
+
   const shellCandidates = Array.from(new Set([
-    baseShell,
+    shellPath && existsSync(shellPath) ? shellPath : undefined,
+    ...detectShells().map((s) => s.path),
     process.env.SHELL,
+    process.platform === 'win32' ? 'powershell.exe' : undefined,
+    process.platform === 'win32' ? 'cmd.exe' : undefined,
     '/bin/zsh',
     '/bin/bash',
     '/bin/sh',
   ].filter(Boolean))) as string[];
-
+  const defaultShell = shellCandidates[0] ?? (process.platform === 'win32' ? 'powershell.exe' : '/bin/sh');
   const env = Object.fromEntries(
     Object.entries({
       ...process.env,
-      SHELL: process.env.SHELL || baseShell,
+      SHELL: process.env.SHELL || defaultShell,
       TERM: process.env.TERM || 'xterm-256color',
       PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
     }).filter(([, value]) => typeof value === 'string')
@@ -385,6 +426,7 @@ ipcMain.handle(
     } catch {
       continue;
     }
+
     for (const cwd of cwdCandidates) {
       try {
         ptyProcess = pty.spawn(shell, [], {
@@ -400,6 +442,7 @@ ipcMain.handle(
         continue;
       }
     }
+
     if (ptyProcess) break;
   }
 
@@ -408,7 +451,7 @@ ipcMain.handle(
     return {
       success: false,
       id,
-      error: `posix_spawnp failed. shells=${shellCandidates.join(', ')} cwd=${cwdCandidates.join(', ')} last=${lastMessage}`,
+      error: `Failed to spawn terminal. shells=${shellCandidates.join(', ')} cwd=${cwdCandidates.join(', ')} last=${lastMessage}`,
     };
   }
 
