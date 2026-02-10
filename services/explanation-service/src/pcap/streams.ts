@@ -275,10 +275,6 @@ export async function listTcpStreams(session: PcapSession, opts?: {
 
   const args: string[] = [
     tsharkPath,
-    '-o',
-    'tcp.desegment_tcp_streams:TRUE',
-    '-o',
-    'tcp.desegment_tcp_data:TRUE',
     '-r',
     session.filePath,
     '-n',
@@ -413,7 +409,13 @@ export async function followTcpStream(
     throw new Error('tshark was not found. Install Wireshark or set TSHARK_PATH to the tshark binary.');
   }
 
-  const args: string[] = [
+  const prefs: string[] = [
+    '-o',
+    'tcp.desegment_tcp_streams:TRUE',
+    '-o',
+    'tcp.desegment_tcp_data:TRUE',
+  ];
+  const baseArgs: string[] = [
     tsharkPath,
     '-r',
     session.filePath,
@@ -451,9 +453,26 @@ export async function followTcpStream(
     '-e',
     'tcp.payload',
   ];
+  const argsWithPrefs = [tsharkPath, ...prefs, ...baseArgs.slice(1)];
+  const argsWithoutPrefs = baseArgs;
 
   logInfo('tshark.stream.follow.start', { session_id: session.id, stream_id: streamId });
-  const stdout = await runTshark(args, { timeoutMs: 20000, label: 'stream.follow' });
+  let stdout = '';
+  let prefsApplied = true;
+  try {
+    stdout = await runTshark(argsWithPrefs, { timeoutMs: 20000, label: 'stream.follow' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/unknown preference/i.test(message)) {
+      prefsApplied = false;
+      stdout = await runTshark(argsWithoutPrefs, { timeoutMs: 20000, label: 'stream.follow' });
+    } else {
+      throw error;
+    }
+  }
+  const prefsNote = prefsApplied
+    ? []
+    : ['TCP desegmentation prefs unsupported; ran without -o preferences.'];
   const lines = stdout.split('\n').filter((l) => l.length);
   if (lines.length === 0) {
     const fallback = await runTsharkFollowAscii(session, streamId);
@@ -478,7 +497,7 @@ export async function followTcpStream(
               context_packets: opts.contextPackets ?? 0,
             }
           : undefined,
-        notes: ['Fallback follow,tcp,ascii used (no tcp.payload frames decoded).'],
+        notes: ['Fallback follow,tcp,ascii used (no tcp.payload frames decoded).', ...prefsNote],
       };
       logInfo('tshark.stream.follow.complete', {
         session_id: session.id,
@@ -510,7 +529,7 @@ export async function followTcpStream(
             context_packets: opts.contextPackets ?? 0,
           }
         : undefined,
-      notes: ['No payload frames found for this stream.'],
+      notes: ['No payload frames found for this stream.', ...prefsNote],
     };
     logInfo('tshark.stream.follow.complete', {
       session_id: session.id,
@@ -579,7 +598,7 @@ export async function followTcpStream(
               context_packets: opts.contextPackets ?? 0,
             }
           : undefined,
-        notes: ['Fallback follow,tcp,ascii used (no tcp.payload frames decoded).'],
+        notes: ['Fallback follow,tcp,ascii used (no tcp.payload frames decoded).', ...prefsNote],
       };
       logInfo('tshark.stream.follow.complete', {
         session_id: session.id,
@@ -611,7 +630,7 @@ export async function followTcpStream(
             context_packets: opts.contextPackets ?? 0,
           }
         : undefined,
-      notes: ['No payload frames found for this stream.'],
+      notes: ['No payload frames found for this stream.', ...prefsNote],
     };
     logInfo('tshark.stream.follow.complete', {
       session_id: session.id,
@@ -749,7 +768,7 @@ export async function followTcpStream(
     }
   }
 
-  const notes: string[] = [];
+  const notes: string[] = [...prefsNote];
   if (other.length) {
     notes.push('Some payload frames did not match the primary endpoints; output may be incomplete.');
   }

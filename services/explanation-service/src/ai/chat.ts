@@ -238,31 +238,45 @@ export async function processChat(
 
 export function streamChat(query: string, context?: ChatContext): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
-  const sendEvent = (controller: ReadableStreamDefaultController, event: ChatStreamEvent) => {
-    controller.enqueue(encoder.encode(`event: ${event.type}\n`));
-    controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-  };
-
-  const emitToolSummary = (
-    controller: ReadableStreamDefaultController,
-    toolResults: Array<{ toolCallId: string; toolName: string; output: any }>
-  ) => {
-    if (!toolResults.length) return;
-    const summaries = summarizeToolResults(toolResults as any);
-    if (!summaries.length) return;
-    const summaryText = summaries.map((s) => `- ${s.summary}`).join('\n');
-    sendEvent(controller, { type: 'tool_summary', summary: summaryText });
-  };
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
+      let closed = false;
+      const safeSendEvent = (event: ChatStreamEvent) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`event: ${event.type}\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          closed = true;
+        }
+      };
+      const safeClose = () => {
+        if (closed) return;
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // ignore
+        }
+      };
+      const emitToolSummary = (
+        toolResults: Array<{ toolCallId: string; toolName: string; output: any }>
+      ) => {
+        if (!toolResults.length) return;
+        const summaries = summarizeToolResults(toolResults as any);
+        if (!summaries.length) return;
+        const summaryText = summaries.map((s) => `- ${s.summary}`).join('\n');
+        safeSendEvent({ type: 'tool_summary', summary: summaryText });
+      };
+
       const contextAvailable = !!(context?.session_id && context?.artifact);
       logInfo('ai.stream.start', {
         session_id: context?.session_id ?? null,
         context_available: contextAvailable,
         query_length: query.length,
       });
-      sendEvent(controller, {
+      safeSendEvent({
         type: 'status',
         stage: 'start',
         message: contextAvailable ? `Context ready for ${context?.session_id}` : 'No session context',
@@ -271,7 +285,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
       const apiKey = process.env.OPENAI_API_KEY;
       if (!apiKey) {
         logWarn('ai.stream.missing_api_key');
-        sendEvent(controller, {
+        safeSendEvent({
           type: 'text',
           delta:
             `I received your query: "${query}". ` +
@@ -280,8 +294,8 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
               : 'No session context available. ') +
             'To enable AI responses, please set the OPENAI_API_KEY environment variable.',
         });
-        sendEvent(controller, { type: 'done', finish_reason: 'missing_api_key' });
-        controller.close();
+        safeSendEvent({ type: 'done', finish_reason: 'missing_api_key' });
+        safeClose();
         return;
       }
 
@@ -302,13 +316,13 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
           next_actions: decision.next_actions,
         });
 
-        sendEvent(controller, {
+        safeSendEvent({
           type: 'status',
           stage: 'route',
           message: `Routing to ${decision.route} (${decision.confidence})`,
         });
         if (decision.next_actions.length) {
-          sendEvent(controller, {
+          safeSendEvent({
             type: 'status',
             stage: 'plan',
             message: `Plan: ${decision.next_actions.join(' -> ')}`,
@@ -323,7 +337,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
             const totalTokens = step.usage?.totalTokens;
             const tokenLabel = totalTokens ? ` • ${totalTokens} tokens` : '';
             const toolLabel = toolCalls ? ` • ${toolCalls} tool call${toolCalls === 1 ? '' : 's'}` : '';
-            sendEvent(controller, {
+            safeSendEvent({
               type: 'status',
               stage: 'step',
               message: `Step ${stepCount}${toolLabel}${tokenLabel}`,
@@ -334,7 +348,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
                 const msg = warning.type === 'other' 
                   ? (warning as any).message 
                   : `${warning.type}: ${(warning as any).feature || (warning as any).details || 'unknown'}`;
-                sendEvent(controller, {
+                safeSendEvent({
                   type: 'status',
                   stage: 'warning',
                   message: msg,
@@ -343,7 +357,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
             }
 
             if (step.toolResults && step.toolResults.length) {
-              emitToolSummary(controller, step.toolResults as any);
+              emitToolSummary(step.toolResults as any);
             }
           },
         });
@@ -355,17 +369,17 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
           if (part.type === 'text-delta') {
             const delta = (part as { textDelta?: string }).textDelta ?? '';
             if (delta) {
-              sendEvent(controller, { type: 'text', delta });
+              safeSendEvent({ type: 'text', delta });
               receivedText = true;
             }
           } else if (part.type === 'tool-call') {
-            sendEvent(controller, {
+            safeSendEvent({
               type: 'tool_call',
               toolCallId: part.toolCallId,
               toolName: part.toolName,
               input: part.input,
             });
-            sendEvent(controller, {
+            safeSendEvent({
               type: 'status',
               stage: 'tool_call',
               message: `Calling tool: ${part.toolName}`,
@@ -375,28 +389,28 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
               (part as { textDelta?: string; text?: string }).textDelta ?? (part as any).text ?? '';
             if (delta) {
               reasoningBuffer += delta;
-              sendEvent(controller, { type: 'reasoning', delta });
+              safeSendEvent({ type: 'reasoning', delta });
             }
           } else if (part.type === 'reasoning-delta') {
             const delta = (part as { textDelta?: string }).textDelta ?? '';
             if (delta) {
               reasoningBuffer += delta;
-              sendEvent(controller, { type: 'reasoning', delta });
+              safeSendEvent({ type: 'reasoning', delta });
             }
           } else if (part.type === 'tool-result') {
-            sendEvent(controller, {
+            safeSendEvent({
               type: 'tool_result',
               toolCallId: part.toolCallId,
               toolName: part.toolName,
               output: part.output,
             });
-            sendEvent(controller, {
+            safeSendEvent({
               type: 'status',
               stage: 'tool_result',
               message: `Tool completed: ${part.toolName}`,
             });
           } else if (part.type === 'reasoning-start') {
-            sendEvent(controller, {
+            safeSendEvent({
               type: 'status',
               stage: 'reasoning',
               message: 'Reasoning…',
@@ -407,7 +421,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
         if (!receivedText) {
           const fallbackText = (await result.text).trim();
           if (fallbackText) {
-            sendEvent(controller, { type: 'text', delta: fallbackText });
+            safeSendEvent({ type: 'text', delta: fallbackText });
           }
         }
 
@@ -415,7 +429,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
           const reasoningText = (await (result as any).reasoningText) as string | undefined;
           if (reasoningText) {
             reasoningBuffer = reasoningText;
-            sendEvent(controller, { type: 'reasoning', delta: reasoningText });
+            safeSendEvent({ type: 'reasoning', delta: reasoningText });
           } else {
             const reasoningParts = (await (result as any).reasoning) as Array<{ text?: string; textDelta?: string }> | undefined;
             if (Array.isArray(reasoningParts) && reasoningParts.length) {
@@ -424,7 +438,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
                 .join('');
               if (combined) {
                 reasoningBuffer = combined;
-                sendEvent(controller, { type: 'reasoning', delta: combined });
+                safeSendEvent({ type: 'reasoning', delta: combined });
               }
             }
           }
@@ -445,20 +459,20 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
         }
 
         const toolResults = await result.toolResults;
-        emitToolSummary(controller, toolResults as any);
+        emitToolSummary(toolResults as any);
 
         const finishReason = await result.finishReason;
         logInfo('ai.stream.complete', {
           session_id: context?.session_id ?? null,
           finish_reason: finishReason,
         });
-        sendEvent(controller, { type: 'done', finish_reason: finishReason });
+        safeSendEvent({ type: 'done', finish_reason: finishReason });
       } catch (error) {
         logError('ai.stream.error', { error: toErrorMeta(error) });
         const errorMessage = error instanceof Error ? error.message : String(error);
-        sendEvent(controller, { type: 'error', message: errorMessage });
+        safeSendEvent({ type: 'error', message: errorMessage });
       } finally {
-        controller.close();
+        safeClose();
       }
     },
   });
