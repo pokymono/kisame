@@ -4,6 +4,7 @@ import {
   startLiveCapture,
   stopLiveCapture,
   getLiveCapture,
+  getLiveCaptureStats,
 } from '../pcap';
 import { getClientId } from '../utils/client';
 
@@ -82,11 +83,29 @@ export async function handleGetLiveCapture(req: Request, captureId: string): Pro
   if (!capture || (capture.ownerId && capture.ownerId !== ownerId)) {
     return json({ error: 'Unknown capture_id' }, { status: 404 });
   }
+
+  const stats = getLiveCaptureStats(captureId);
+  const sizeBytes = stats?.sizeBytes ?? 0;
+  const packetCount = stats?.packetCount ?? 0;
+  const status = capture.exitCode == null ? 'running' : capture.exitCode === 0 ? 'stopped' : 'error';
+  const stderrPreview = capture.stderr?.trim();
+  const errorMessage =
+    status === 'error'
+      ? stderrPreview
+        ? stderrPreview.slice(0, 400)
+        : 'Capture process exited with an error.'
+      : undefined;
+
   return json({
     capture_id: capture.id,
-    status: 'running',
+    status,
+    exit_code: capture.exitCode ?? null,
     interface: { id: capture.interfaceId, name: capture.interfaceName },
     file_name: capture.fileName,
     started_at: capture.startedAt,
+    ended_at: capture.endedAt,
+    size_bytes: sizeBytes,
+    packet_count: packetCount,
+    error: errorMessage,
   });
 }

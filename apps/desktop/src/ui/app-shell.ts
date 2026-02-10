@@ -23,6 +23,22 @@ export type AppShellRefs = {
   captureBadge: HTMLElement;
   capturePanel: HTMLElement;
   exportPanel: HTMLElement;
+  // Interface selector modal
+  interfaceModalOverlay: HTMLElement;
+  interfaceModalPanel: HTMLElement;
+  interfaceModalTitle: HTMLElement;
+  interfaceModalList: HTMLElement;
+  interfaceModalRefreshButton: HTMLButtonElement;
+  interfaceModalCancelButton: HTMLButtonElement;
+  interfaceModalLoading: HTMLElement;
+  interfaceModalError: HTMLElement;
+  // Capture card enhanced elements
+  selectedInterfaceDisplay: HTMLElement;
+  interfaceSelectButton: HTMLButtonElement;
+  captureFilterInput: HTMLInputElement;
+  liveStatsContainer: HTMLElement;
+  livePacketCount: HTMLElement;
+  liveDuration: HTMLElement;
   chatColumn: HTMLElement;
   sessionsList: HTMLElement;
   timelineList: HTMLElement;
@@ -1225,8 +1241,11 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   openCard.append(openCardGlow, openCardHeader, openCardDesc, openCardFooter);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LIVE CAPTURE CARD - Enhanced with interface selection
+  // ═══════════════════════════════════════════════════════════════════════════
   const liveCard = el('div', {
-    className: 'relative group data-card rounded-lg p-5 flex flex-col gap-4 overflow-hidden',
+    className: 'relative group data-card rounded-lg p-5 flex flex-col gap-3 overflow-hidden',
   });
   
   const liveCardGlow = el('div', {
@@ -1246,32 +1265,199 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   });
   liveCardHeader.append(liveCardTitle, liveCardBadge);
 
-  const liveCardDesc = el('div', {
-    className: 'text-[13px] text-white/50 leading-relaxed',
-    text: 'Capture packets from a network interface and stream directly into Kisame for analysis.',
+  // Interface selection button (compact)
+  const interfaceSelectButton = el('button', {
+    className: 'interface-select-btn w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border border-[var(--app-line)] bg-[var(--app-bg)] hover:border-[var(--accent-teal)]/40 hover:bg-[var(--app-bg-deep)] transition-all duration-200 group/iface',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  
+  const selectedInterfaceDisplay = el('div', { className: 'flex items-center gap-2 min-w-0' });
+  const ifaceNetIcon = el('div', {
+    className: 'text-[var(--accent-teal)]',
   });
+  ifaceNetIcon.innerHTML = `<svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8.288 15.038a5.25 5.25 0 017.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 011.06 0z"/></svg>`;
+  
+  const ifaceTextGroup = el('div', { className: 'flex flex-col items-start min-w-0 flex-1' });
+  const selectedIfaceName = el('div', {
+    className: 'text-[11px] font-[var(--font-mono)] text-white/70 truncate',
+    text: 'Select interface…',
+    attrs: { 'data-iface-name': 'true' },
+  });
+  const selectedIfaceDesc = el('div', {
+    className: 'text-[9px] font-[var(--font-mono)] text-white/30 truncate',
+    text: 'Click to choose',
+    attrs: { 'data-iface-desc': 'true' },
+  });
+  ifaceTextGroup.append(selectedIfaceName, selectedIfaceDesc);
+  selectedInterfaceDisplay.append(ifaceNetIcon, ifaceTextGroup);
+  
+  const ifaceChevron = el('div', {
+    className: 'text-white/25 group-hover/iface:text-[var(--accent-teal)] transition-colors',
+  });
+  ifaceChevron.innerHTML = `<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 9l-7 7-7-7"/></svg>`;
+  
+  interfaceSelectButton.append(selectedInterfaceDisplay, ifaceChevron);
+
+  // Capture filter input (compact inline)
+  const captureFilterInput = el('input', {
+    className: 'w-full px-3 py-2 rounded-md border border-[var(--app-line)] bg-[var(--app-bg)] text-[10px] font-[var(--font-mono)] text-white/60 placeholder:text-white/25 focus:outline-none focus:border-[var(--accent-teal)]/40 transition-colors',
+    attrs: { 
+      type: 'text', 
+      placeholder: 'Filter: tcp port 443',
+      spellcheck: 'false',
+    },
+  }) as HTMLInputElement;
+
+  // Live stats display (shown during capture)
+  const liveStatsContainer = el('div', {
+    className: 'live-stats-container hidden grid grid-cols-2 gap-2',
+  });
+  
+  const packetStatCard = el('div', { className: 'flex flex-col items-center justify-center py-2 px-3 rounded-md border border-[var(--accent-teal)]/25 bg-[var(--accent-teal)]/5' });
+  const livePacketCount = el('div', {
+    className: 'text-sm font-[var(--font-mono)] font-semibold text-[var(--accent-teal)] tabular-nums',
+    text: '0',
+  });
+  const packetLabel = el('div', {
+    className: 'text-[8px] font-[var(--font-mono)] tracking-[0.1em] text-white/35 uppercase',
+    text: 'PACKETS',
+  });
+  packetStatCard.append(livePacketCount, packetLabel);
+  
+  const durationStatCard = el('div', { className: 'flex flex-col items-center justify-center py-2 px-3 rounded-md border border-[var(--accent-cyan)]/25 bg-[var(--accent-cyan)]/5' });
+  const liveDuration = el('div', {
+    className: 'text-sm font-[var(--font-mono)] font-semibold text-[var(--accent-cyan)] tabular-nums',
+    text: '00:00',
+  });
+  const durationLabel = el('div', {
+    className: 'text-[8px] font-[var(--font-mono)] tracking-[0.1em] text-white/35 uppercase',
+    text: 'DURATION',
+  });
+  durationStatCard.append(liveDuration, durationLabel);
+  
+  liveStatsContainer.append(packetStatCard, durationStatCard);
 
   const liveCaptureStatus = el('div', {
-    className: 'flex items-center gap-2 px-3 py-2 rounded bg-[var(--app-bg)] border border-[var(--app-line)]',
+    className: 'flex items-center gap-2 px-2 py-1.5 rounded bg-[var(--app-bg)] border border-[var(--app-line)]',
   });
   const statusIndicator = el('div', {
-    className: 'size-2 rounded-full bg-white/20',
+    className: 'size-1.5 rounded-full bg-white/20',
     attrs: { 'data-status-dot': 'true' },
   });
   const statusLabel = el('span', {
-    className: 'text-[10px] font-[var(--font-mono)] tracking-wider text-white/40 uppercase',
+    className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-white/40 uppercase',
     text: 'READY',
     attrs: { 'data-status-text': 'true' },
   });
   liveCaptureStatus.append(statusIndicator, statusLabel);
 
-  const liveCardFooter = el('div', { className: 'flex items-center justify-between mt-auto pt-2' });
+  const liveCardFooter = el('div', { className: 'flex items-center justify-between mt-auto' });
   liveCardFooter.append(liveCaptureStatus, liveCaptureButton);
 
-  liveCard.append(liveCardGlow, liveCardHeader, liveCardDesc, liveCardFooter);
+  liveCard.append(liveCardGlow, liveCardHeader, interfaceSelectButton, captureFilterInput, liveStatsContainer, liveCardFooter);
 
   captureGrid.append(openCard, liveCard);
   capturePanel.append(captureHeader, captureGrid);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // INTERFACE SELECTION MODAL
+  // ═══════════════════════════════════════════════════════════════════════════
+  const interfaceModalOverlay = el('div', {
+    className: 'interface-modal-overlay fixed inset-0 z-50 hidden flex items-center justify-center p-4',
+  });
+  
+  const modalBackdrop = el('div', {
+    className: 'absolute inset-0 bg-black/60 backdrop-blur-sm',
+    attrs: { 'data-modal-backdrop': 'true' },
+  });
+  
+  const interfaceModalPanel = el('div', {
+    className: 'interface-modal-panel relative w-full max-w-lg rounded-xl border border-[var(--app-line-strong)] bg-[var(--app-surface)] shadow-2xl overflow-hidden',
+  });
+  
+  // Modal header with gradient accent
+  const modalAccent = el('div', {
+    className: 'h-1 w-full',
+    attrs: { style: 'background: linear-gradient(90deg, var(--accent-teal) 0%, var(--accent-cyan) 50%, var(--accent-purple) 100%);' },
+  });
+  
+  const modalHeaderArea = el('div', { className: 'px-6 pt-5 pb-4 border-b border-[var(--app-line)]' });
+  
+  const modalTitleRow = el('div', { className: 'flex items-center justify-between' });
+  const interfaceModalTitle = el('h2', {
+    className: 'font-[var(--font-display)] text-base font-semibold tracking-[0.15em] text-white uppercase',
+    text: 'SELECT INTERFACE',
+  });
+  
+  const interfaceModalRefreshButton = el('button', {
+    className: 'iface-refresh-btn flex items-center gap-2 px-3 py-1.5 rounded-md border border-[var(--app-line)] bg-[var(--app-bg)] text-[10px] font-[var(--font-mono)] tracking-wider text-white/50 uppercase hover:text-[var(--accent-cyan)] hover:border-[var(--accent-cyan)]/40 transition-all',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  const refreshIcon = el('span', {});
+  refreshIcon.innerHTML = `<svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>`;
+  interfaceModalRefreshButton.append(refreshIcon, el('span', { text: 'Refresh' }));
+  
+  modalTitleRow.append(interfaceModalTitle, interfaceModalRefreshButton);
+  
+  const modalSubtitle = el('p', {
+    className: 'mt-2 text-[11px] font-[var(--font-mono)] text-white/40 leading-relaxed',
+    text: 'Choose a network interface to capture packets from. Interfaces with active traffic are highlighted.',
+  });
+  
+  modalHeaderArea.append(modalTitleRow, modalSubtitle);
+  
+  // Modal body with interface list
+  const modalBody = el('div', { className: 'px-4 py-4 max-h-[360px] overflow-y-auto' });
+  
+  const interfaceModalList = el('div', {
+    className: 'interface-list space-y-2',
+  });
+  
+  const interfaceModalLoading = el('div', {
+    className: 'interface-loading hidden flex flex-col items-center justify-center py-12',
+  });
+  const loadingSpinner = el('div', {
+    className: 'size-8 border-2 border-[var(--accent-teal)]/20 border-t-[var(--accent-teal)] rounded-full animate-spin mb-4',
+  });
+  const loadingText = el('div', {
+    className: 'text-[11px] font-[var(--font-mono)] tracking-wider text-white/40 uppercase',
+    text: 'SCANNING INTERFACES…',
+  });
+  interfaceModalLoading.append(loadingSpinner, loadingText);
+  
+  const interfaceModalError = el('div', {
+    className: 'interface-error hidden flex flex-col items-center justify-center py-8 text-center',
+  });
+  const errorIcon = el('div', {
+    className: 'size-12 rounded-full bg-[var(--accent-red)]/10 flex items-center justify-center mb-4',
+  });
+  errorIcon.innerHTML = `<svg class="size-6 text-[var(--accent-red)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`;
+  const errorTitle = el('div', {
+    className: 'text-[12px] font-[var(--font-display)] font-semibold text-[var(--accent-red)] uppercase tracking-wider mb-2',
+    text: 'FAILED TO LOAD INTERFACES',
+  });
+  const errorMessage = el('div', {
+    className: 'text-[11px] font-[var(--font-mono)] text-white/40 max-w-xs',
+    attrs: { 'data-error-message': 'true' },
+    text: 'Unable to enumerate network interfaces. Check tshark installation.',
+  });
+  interfaceModalError.append(errorIcon, errorTitle, errorMessage);
+  
+  modalBody.append(interfaceModalList, interfaceModalLoading, interfaceModalError);
+  
+  // Modal footer
+  const modalFooter = el('div', { className: 'px-6 py-4 border-t border-[var(--app-line)] bg-[var(--app-bg-deep)]/50 flex items-center justify-end gap-3' });
+  
+  const interfaceModalCancelButton = el('button', {
+    className: 'px-4 py-2 rounded-md border border-[var(--app-line)] text-[11px] font-[var(--font-display)] tracking-wider text-white/60 uppercase hover:text-white hover:border-white/30 transition-all',
+    text: 'Cancel',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  
+  modalFooter.append(interfaceModalCancelButton);
+  
+  interfaceModalPanel.append(modalAccent, modalHeaderArea, modalBody, modalFooter);
+  interfaceModalOverlay.append(modalBackdrop, interfaceModalPanel);
 
   const exportPanel = el('section', {
     className:
@@ -1390,7 +1576,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     explorerResizeHandle,
     chatResizeHandle
   );
-  app.append(bgEffects, topBar, body, workflowModalOverlay);
+  app.append(bgEffects, topBar, body, workflowModalOverlay, interfaceModalOverlay);
   root.replaceChildren(app);
 
   return {
@@ -1415,6 +1601,22 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     captureBadge: badgeText,
     capturePanel,
     exportPanel,
+    // Interface modal refs
+    interfaceModalOverlay,
+    interfaceModalPanel,
+    interfaceModalTitle,
+    interfaceModalList,
+    interfaceModalRefreshButton,
+    interfaceModalCancelButton,
+    interfaceModalLoading,
+    interfaceModalError,
+    // Capture card enhanced refs
+    selectedInterfaceDisplay,
+    interfaceSelectButton,
+    captureFilterInput,
+    liveStatsContainer,
+    livePacketCount,
+    liveDuration,
     exportReportCheckbox: reportRow.input,
     exportPdfCheckbox: pdfRow.input,
     exportJsonCheckbox: jsonRow.input,

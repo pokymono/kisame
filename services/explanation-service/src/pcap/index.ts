@@ -14,4 +14,5 @@ export {
   startLiveCapture,
   stopLiveCapture,
   getLiveCapture,
+  getLiveCaptureStats,
 } from './live-capture';

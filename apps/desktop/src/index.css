@@ -1127,6 +1127,109 @@
   display: none !important;
 }
 
+.interface-modal-overlay {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+}
+
+.interface-modal-panel {
+  max-height: 85vh;
+  box-shadow: 
+    0 0 0 1px rgba(255, 255, 255, 0.05),
+    0 25px 50px -12px rgba(0, 0, 0, 0.5),
+    0 0 60px -15px rgba(0, 255, 157, 0.1);
+}
+
+.interface-item {
+  cursor: pointer;
+}
+
+.interface-item:hover .interface-icon {
+  transform: scale(1.05);
+}
+
+.interface-icon {
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.iface-refresh-btn:hover svg {
+  animation: spinnerRotate 0.6s linear;
+}
+
+.interface-select-btn {
+  cursor: pointer;
+}
+
+.interface-select-btn.interface-selected {
+  border-color: rgba(0, 255, 157, 0.3);
+  background: rgba(0, 255, 157, 0.05);
+}
+
+.interface-select-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.live-stats-container {
+  margin: 0.5rem 0;
+}
+
+.stat-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, transparent 0%, rgba(255, 255, 255, 0.02) 100%);
+  pointer-events: none;
+}
+
+@keyframes statPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(0, 255, 157, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(0, 255, 157, 0);
+  }
+}
+
+.live-stats-container:not(.hidden) .stat-card:first-child {
+  animation: statPulse 2s ease-in-out infinite;
+}
+
+@keyframes attentionPulse {
+  0%, 100% {
+    background: rgba(0, 255, 157, 0.05);
+    border-color: rgba(0, 255, 157, 0.3);
+  }
+  50% {
+    background: rgba(0, 255, 157, 0.1);
+    border-color: rgba(0, 255, 157, 0.5);
+  }
+}
+
+.pulse-attention {
+  animation: attentionPulse 1.5s ease-in-out infinite;
+  color: var(--accent-teal) !important;
+}
+
+.pulse-attention [data-status-dot] {
+  background: var(--accent-teal);
+  animation: pulseDot 1s ease-in-out infinite;
+}
+
+/* Filter input styling */
+.filter-section input:focus {
+  box-shadow: 0 0 0 3px rgba(0, 255, 157, 0.1);
+}
+
+.filter-section input::placeholder {
+  font-style: italic;
+}
+
 @media (max-width: 1400px) {
   .main-grid-responsive {
     --explorer-w: 240px;

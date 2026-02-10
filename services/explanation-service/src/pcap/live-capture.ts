@@ -1,4 +1,4 @@
-import { statSync } from 'fs';
+import { statSync, openSync, readSync, closeSync } from 'fs';
 import type { PcapSession } from '../types';
 import { ensureDir, getPcapDir } from '../utils/fs';
 import { utcNowIso } from '../utils/response';
@@ -25,6 +25,15 @@ export type LiveCapture = {
   process: Bun.Subprocess;
   stdout: string;
   stderr: string;
+  exitCode: number | null;
+  endedAt: string | null;
+  stats: {
+    sizeBytes: number;
+    packetCount: number;
+    parseOffset: number;
+    format: 'unknown' | 'pcap' | 'pcapng';
+    endian: 'le' | 'be' | null;
+  };
 };
 
 const activeCaptures = new Map<string, LiveCapture>();
@@ -102,6 +111,145 @@ function chooseDefaultInterface(interfaces: CaptureInterface[]): CaptureInterfac
   return nonRestricted ?? interfaces[0]!;
 }
 
+function readFileSlice(filePath: string, start: number, end: number): Uint8Array {
+  const length = Math.max(0, end - start);
+  if (length === 0) return new Uint8Array();
+  let fd: number | null = null;
+  try {
+    fd = openSync(filePath, 'r');
+    const buffer = Buffer.allocUnsafe(length);
+    const bytesRead = readSync(fd, buffer, 0, length, start);
+    return bytesRead === length ? buffer : buffer.subarray(0, Math.max(0, bytesRead));
+  } catch {
+    return new Uint8Array();
+  } finally {
+    if (fd != null) closeSync(fd);
+  }
+}
+
+function detectPcapEndian(header: Uint8Array): 'le' | 'be' | null {
+  if (header.length < 4) return null;
+  const b0 = header[0];
+  const b1 = header[1];
+  const b2 = header[2];
+  const b3 = header[3];
+  if (b0 === 0xd4 && b1 === 0xc3 && b2 === 0xb2 && b3 === 0xa1) return 'le';
+  if (b0 === 0xa1 && b1 === 0xb2 && b2 === 0xc3 && b3 === 0xd4) return 'be';
+  if (b0 === 0x4d && b1 === 0x3c && b2 === 0xb2 && b3 === 0xa1) return 'le';
+  if (b0 === 0xa1 && b1 === 0xb2 && b2 === 0x3c && b3 === 0x4d) return 'be';
+  return null;
+}
+
+function detectPcapngEndian(header: Uint8Array): 'le' | 'be' | null {
+  if (header.length < 12) return null;
+  const b8 = header[8];
+  const b9 = header[9];
+  const b10 = header[10];
+  const b11 = header[11];
+  if (b8 === 0x1a && b9 === 0x2b && b10 === 0x3c && b11 === 0x4d) return 'be';
+  if (b8 === 0x4d && b9 === 0x3c && b10 === 0x2b && b11 === 0x1a) return 'le';
+  return null;
+}
+
+function initCaptureStats(): LiveCapture['stats'] {
+  return {
+    sizeBytes: 0,
+    packetCount: 0,
+    parseOffset: 0,
+    format: 'unknown',
+    endian: null,
+  };
+}
+
+function updateCaptureStats(capture: LiveCapture): { sizeBytes: number; packetCount: number } {
+  let sizeBytes = 0;
+  try {
+    sizeBytes = statSync(capture.filePath).size;
+  } catch {
+    capture.stats.sizeBytes = 0;
+    return { sizeBytes: 0, packetCount: capture.stats.packetCount };
+  }
+
+  if (sizeBytes < capture.stats.parseOffset) {
+    capture.stats = initCaptureStats();
+  }
+
+  capture.stats.sizeBytes = sizeBytes;
+  if (sizeBytes === 0) {
+    return { sizeBytes, packetCount: capture.stats.packetCount };
+  }
+
+  if (capture.stats.format === 'unknown') {
+    const header = readFileSlice(capture.filePath, 0, Math.min(32, sizeBytes));
+    const isPcapng =
+      header.length >= 4 &&
+      header[0] === 0x0a &&
+      header[1] === 0x0d &&
+      header[2] === 0x0d &&
+      header[3] === 0x0a;
+    if (isPcapng) {
+      capture.stats.format = 'pcapng';
+      capture.stats.endian = detectPcapngEndian(header);
+      capture.stats.parseOffset = 0;
+    } else {
+      const endian = detectPcapEndian(header);
+      if (endian) {
+        capture.stats.format = 'pcap';
+        capture.stats.endian = endian;
+        capture.stats.parseOffset = sizeBytes >= 24 ? 24 : 0;
+      }
+    }
+  }
+
+  if (capture.stats.format === 'unknown') {
+    return { sizeBytes, packetCount: capture.stats.packetCount };
+  }
+
+  if (capture.stats.format === 'pcap' && capture.stats.parseOffset === 0 && sizeBytes >= 24) {
+    capture.stats.parseOffset = 24;
+  }
+
+  if (capture.stats.format === 'pcapng' && capture.stats.endian == null) {
+    const header = readFileSlice(capture.filePath, 0, Math.min(32, sizeBytes));
+    capture.stats.endian = detectPcapngEndian(header);
+    if (capture.stats.endian == null) {
+      return { sizeBytes, packetCount: capture.stats.packetCount };
+    }
+  }
+
+  if (sizeBytes <= capture.stats.parseOffset) {
+    return { sizeBytes, packetCount: capture.stats.packetCount };
+  }
+
+  const slice = readFileSlice(capture.filePath, capture.stats.parseOffset, sizeBytes);
+  const view = new DataView(slice.buffer, slice.byteOffset, slice.byteLength);
+  let localOffset = 0;
+  const littleEndian = capture.stats.endian === 'le';
+
+  if (capture.stats.format === 'pcap') {
+    while (localOffset + 16 <= slice.length) {
+      const inclLen = view.getUint32(localOffset + 8, littleEndian);
+      const recordLen = 16 + inclLen;
+      if (recordLen <= 16 || localOffset + recordLen > slice.length) break;
+      capture.stats.packetCount += 1;
+      localOffset += recordLen;
+    }
+  } else if (capture.stats.format === 'pcapng') {
+    while (localOffset + 8 <= slice.length) {
+      const blockType = view.getUint32(localOffset, littleEndian);
+      const blockLen = view.getUint32(localOffset + 4, littleEndian);
+      if (blockLen < 12 || localOffset + blockLen > slice.length) break;
+      if (blockType === 0x00000006 || blockType === 0x00000003 || blockType === 0x00000002) {
+        capture.stats.packetCount += 1;
+      }
+      localOffset += blockLen;
+    }
+  }
+
+  capture.stats.parseOffset += localOffset;
+  return { sizeBytes, packetCount: capture.stats.packetCount };
+}
+
 export type StartCaptureOptions = {
   interfaceId?: string;
   durationSeconds?: number;
@@ -168,6 +316,9 @@ export async function startLiveCapture(opts: StartCaptureOptions): Promise<LiveC
     process: proc,
     stdout: '',
     stderr: '',
+    exitCode: null,
+    endedAt: null,
+    stats: initCaptureStats(),
   };
 
   const decoder = new TextDecoder();
@@ -194,6 +345,15 @@ export async function startLiveCapture(opts: StartCaptureOptions): Promise<LiveC
       liveCapture.stderr += decoder.decode();
     })();
   }
+
+  void (async () => {
+    const exitCode = await proc.exited;
+    liveCapture.exitCode = exitCode;
+    liveCapture.endedAt = utcNowIso();
+    if (exitCode !== 0) {
+      logWarn('capture.process.exit', { capture_id: id, exit_code: exitCode });
+    }
+  })();
 
   // Give tshark a moment to initialize. If it exits immediately, surface the error.
   const earlyExit = await Promise.race([
@@ -268,4 +428,10 @@ export async function stopLiveCapture(
 
 export function getLiveCapture(captureId: string): LiveCapture | undefined {
   return activeCaptures.get(captureId);
+}
+
+export function getLiveCaptureStats(captureId: string): { sizeBytes: number; packetCount: number } | null {
+  const capture = activeCaptures.get(captureId);
+  if (!capture) return null;
+  return updateCaptureStats(capture);
 }

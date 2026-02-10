@@ -7,6 +7,12 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
+type CaptureInterface = {
+  id: string;
+  name: string;
+  description?: string;
+};
+
 async function initApp() {
   const root = document.getElementById('root');
   if (!root) return;
@@ -17,6 +23,11 @@ async function initApp() {
   let selectedSessionId: string | null = null;
   let liveCaptureId: string | null = null;
   let liveCaptureInterface: string | null = null;
+  let liveCaptureStartTime: number | null = null;
+  let liveCaptureTimer: number | null = null;
+  let selectedInterfaceId: string | null = null;
+  let selectedInterfaceName: string | null = null;
+  let availableInterfaces: CaptureInterface[] = [];
   let lastAnalysisRef: AnalysisArtifact | null = null;
   let captureSessionId: string | null = null;
   type TimelineScope = 'session' | 'all';
@@ -663,6 +674,8 @@ async function initApp() {
     if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${bytes} B`;
   };
+
+  const formatPacketCount = (count: number) => count.toLocaleString();
 
   const EXPORT_SETTINGS_KEY = 'kisame.export.settings';
   type ExportSettings = {
@@ -2152,23 +2165,292 @@ async function initApp() {
       ui.welcomePanel.classList.remove('animate-fade-in-up');
     }, 300);
   }
+  
+  function showInterfaceModal() {
+    ui.interfaceModalOverlay.classList.remove('hidden');
+    ui.interfaceModalOverlay.classList.add('animate-fade-in');
+    ui.interfaceModalPanel.classList.add('animate-scale-in');
+    void loadInterfaces();
+  }
+  
+  function hideInterfaceModal() {
+    ui.interfaceModalOverlay.classList.add('hidden');
+    ui.interfaceModalOverlay.classList.remove('animate-fade-in');
+    ui.interfaceModalPanel.classList.remove('animate-scale-in');
+  }
+  
+  async function loadInterfaces() {
+    ui.interfaceModalList.classList.add('hidden');
+    ui.interfaceModalError.classList.add('hidden');
+    ui.interfaceModalLoading.classList.remove('hidden');
+    
+    try {
+      const res = await fetch(`${explanationBaseUrl}/capture/interfaces`, {
+        method: 'GET',
+        headers: withClientHeaders({}),
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        throw new Error(`Failed to load interfaces (${res.status}). ${msg}`);
+      }
+      const data = (await res.json()) as { interfaces: CaptureInterface[] };
+      availableInterfaces = data.interfaces;
+      renderInterfaceList();
+    } catch (err) {
+      ui.interfaceModalLoading.classList.add('hidden');
+      ui.interfaceModalError.classList.remove('hidden');
+      const errorMsg = ui.interfaceModalError.querySelector('[data-error-message]');
+      if (errorMsg) {
+        errorMsg.textContent = (err as Error).message ?? 'Unable to enumerate network interfaces.';
+      }
+    }
+  }
+  
+  function renderInterfaceList() {
+    ui.interfaceModalLoading.classList.add('hidden');
+    ui.interfaceModalList.classList.remove('hidden');
+    ui.interfaceModalList.replaceChildren();
+    
+    if (availableInterfaces.length === 0) {
+      const emptyState = el('div', {
+        className: 'text-center py-8 text-[11px] font-[var(--font-mono)] text-white/40',
+        text: 'No network interfaces found.',
+      });
+      ui.interfaceModalList.append(emptyState);
+      return;
+    }
+    
+    const primary: CaptureInterface[] = [];
+    const secondary: CaptureInterface[] = [];
+    const virtual: CaptureInterface[] = [];
+    
+    for (const iface of availableInterfaces) {
+      const name = iface.name.toLowerCase();
+      const desc = (iface.description ?? '').toLowerCase();
+      
+      if (/^en\d+$/i.test(iface.name) || /^eth\d+$/i.test(iface.name) || 
+          /ethernet/i.test(desc) || /wi-?fi/i.test(desc) || /wireless/i.test(desc) ||
+          /^bridge\d+$/i.test(iface.name)) {
+        primary.push(iface);
+      }
+      else if (/^lo\d*$/i.test(name) || /loopback/i.test(desc) || 
+               /^utun\d+$/i.test(name) || /^awdl\d+$/i.test(name) ||
+               /^llw\d+$/i.test(name) || /virtual/i.test(desc)) {
+        virtual.push(iface);
+      }
+      else {
+        secondary.push(iface);
+      }
+    }
+    
+    const renderSection = (title: string, interfaces: CaptureInterface[], isPrimary = false) => {
+      if (interfaces.length === 0) return;
+      
+      const sectionLabel = el('div', {
+        className: 'text-[9px] font-[var(--font-mono)] tracking-[0.15em] text-white/30 uppercase mb-2 mt-4 first:mt-0',
+        text: title,
+      });
+      ui.interfaceModalList.append(sectionLabel);
+      
+      for (const iface of interfaces) {
+        const isSelected = selectedInterfaceId === iface.id;
+        const item = el('button', {
+          className: `interface-item w-full flex items-center gap-4 p-4 rounded-lg border transition-all text-left group/item ${
+            isSelected 
+              ? 'border-[var(--accent-teal)] bg-[var(--accent-teal)]/10' 
+              : 'border-[var(--app-line)] bg-[var(--app-bg)] hover:border-[var(--accent-teal)]/40 hover:bg-[var(--app-bg-deep)]'
+          }`,
+          attrs: { type: 'button', 'data-interface-id': iface.id },
+        });
+        
+        const iconType = isPrimary ? 'wifi' : /^lo/i.test(iface.name) ? 'loop' : 'network';
+        const iconSvg = iconType === 'wifi' 
+          ? `<svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8.288 15.038a5.25 5.25 0 017.424 0M5.106 11.856c3.807-3.808 9.98-3.808 13.788 0M1.924 8.674c5.565-5.565 14.587-5.565 20.152 0M12.53 18.22l-.53.53-.53-.53a.75.75 0 011.06 0z"/></svg>`
+          : iconType === 'loop'
+          ? `<svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>`
+          : `<svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z"/></svg>`;
+        
+        const iconWrap = el('div', {
+          className: `interface-icon flex items-center justify-center size-10 rounded-lg border transition-colors ${
+            isSelected 
+              ? 'border-[var(--accent-teal)]/40 bg-[var(--accent-teal)]/15 text-[var(--accent-teal)]' 
+              : 'border-[var(--app-line)] bg-[var(--app-surface)] text-white/40 group-hover/item:text-[var(--accent-teal)] group-hover/item:border-[var(--accent-teal)]/30'
+          }`,
+        });
+        iconWrap.innerHTML = iconSvg;
+        
+        const textGroup = el('div', { className: 'flex-1 min-w-0' });
+        const ifaceName = el('div', {
+          className: `text-[12px] font-[var(--font-mono)] font-medium truncate ${isSelected ? 'text-[var(--accent-teal)]' : 'text-white/80'}`,
+          text: iface.name,
+        });
+        const ifaceDesc = el('div', {
+          className: 'text-[10px] font-[var(--font-mono)] text-white/35 truncate mt-0.5',
+          text: iface.description || `Interface ${iface.id}`,
+        });
+        textGroup.append(ifaceName, ifaceDesc);
+        
+        const idBadge = el('div', {
+          className: 'px-2 py-1 rounded text-[9px] font-[var(--font-mono)] tracking-wider text-white/25 bg-white/5 border border-white/10',
+          text: `#${iface.id}`,
+        });
+        
+        const checkmark = el('div', {
+          className: `transition-opacity ${isSelected ? 'opacity-100' : 'opacity-0'}`,
+        });
+        checkmark.innerHTML = `<svg class="size-5 text-[var(--accent-teal)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 13l4 4L19 7"/></svg>`;
+        
+        item.append(iconWrap, textGroup, idBadge, checkmark);
+        
+        item.addEventListener('click', () => {
+          selectedInterfaceId = iface.id;
+          selectedInterfaceName = iface.name;
+          updateSelectedInterfaceDisplay(iface);
+          hideInterfaceModal();
+        });
+        
+        ui.interfaceModalList.append(item);
+      }
+    };
+    
+    renderSection('PRIMARY INTERFACES', primary, true);
+    renderSection('OTHER INTERFACES', secondary);
+    renderSection('VIRTUAL / LOOPBACK', virtual);
+  }
+  
+  function updateSelectedInterfaceDisplay(iface: CaptureInterface | null) {
+    const nameEl = ui.selectedInterfaceDisplay.querySelector('[data-iface-name]');
+    const descEl = ui.selectedInterfaceDisplay.querySelector('[data-iface-desc]');
+    
+    if (iface) {
+      if (nameEl) nameEl.textContent = iface.name;
+      if (descEl) descEl.textContent = iface.description || `Interface ${iface.id}`;
+      ui.interfaceSelectButton.classList.add('interface-selected');
+    } else {
+      if (nameEl) nameEl.textContent = 'Select interface…';
+      if (descEl) descEl.textContent = 'Click to choose';
+      ui.interfaceSelectButton.classList.remove('interface-selected');
+    }
+  }
+  
+  ui.interfaceSelectButton.addEventListener('click', showInterfaceModal);
+  ui.interfaceModalCancelButton.addEventListener('click', hideInterfaceModal);
+  ui.interfaceModalRefreshButton.addEventListener('click', () => void loadInterfaces());
+  
+  ui.interfaceModalOverlay.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).hasAttribute('data-modal-backdrop')) {
+      hideInterfaceModal();
+    }
+  });
+  
+  // Close on escape
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !ui.interfaceModalOverlay.classList.contains('hidden')) {
+      hideInterfaceModal();
+    }
+  });
+
+  function formatDuration(ms: number): string {
+    const totalSeconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  
+  async function pollCaptureStats() {
+    if (!liveCaptureId) return;
+    try {
+      const res = await fetch(`${explanationBaseUrl}/capture/${liveCaptureId}`, {
+        method: 'GET',
+        headers: withClientHeaders({}),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as {
+          size_bytes?: number;
+          packet_count?: number;
+          status?: string;
+          error?: string;
+        };
+        if (typeof data.packet_count === 'number') {
+          ui.livePacketCount.textContent = formatPacketCount(data.packet_count);
+        } else if (data.size_bytes !== undefined && data.size_bytes > 0) {
+          // Fallback: display file size as a proxy for captured data
+          ui.livePacketCount.textContent = formatBytes(data.size_bytes);
+        }
+
+        if (data.status && data.status !== 'running') {
+          stopCaptureTimer();
+          liveCaptureId = null;
+          liveCaptureInterface = null;
+          ui.liveCaptureButton.textContent = 'Live Capture';
+          ui.liveCaptureButton.classList.remove('btn-loading');
+          ui.liveCaptureButton.disabled = false;
+          ui.openPcapButton.disabled = false;
+          ui.interfaceSelectButton.disabled = false;
+          ui.captureFilterInput.disabled = false;
+          ui.liveCaptureStatus.textContent = data.status === 'error' ? 'ERROR' : 'READY';
+          ui.liveCaptureStatus.classList.remove('pulse-attention', 'status-shimmer');
+          if (data.status === 'error' && data.error) {
+            alert(data.error);
+          }
+        }
+      }
+    } catch {
+      // Ignore polling errors
+    }
+  }
+  
+  function startCaptureTimer() {
+    liveCaptureStartTime = Date.now();
+    ui.liveDuration.textContent = '00:00';
+    ui.livePacketCount.textContent = '0';
+    ui.liveStatsContainer.classList.remove('hidden');
+    ui.liveStatsContainer.classList.add('animate-fade-in');
+    
+    liveCaptureTimer = window.setInterval(() => {
+      if (liveCaptureStartTime) {
+        const elapsed = Date.now() - liveCaptureStartTime;
+        ui.liveDuration.textContent = formatDuration(elapsed);
+        // Poll for capture stats every second
+        void pollCaptureStats();
+      }
+    }, 1000);
+  }
+  
+  function stopCaptureTimer() {
+    if (liveCaptureTimer) {
+      clearInterval(liveCaptureTimer);
+      liveCaptureTimer = null;
+    }
+    liveCaptureStartTime = null;
+    ui.liveStatsContainer.classList.add('hidden');
+    ui.liveStatsContainer.classList.remove('animate-fade-in');
+  }
 
   async function startLiveCapture() {
     if (liveCaptureId) return;
+    
+    if (!selectedInterfaceId) {
+      showInterfaceModal();
+      return;
+    }
+    
     ui.liveCaptureButton.disabled = true;
     ui.openPcapButton.disabled = true;
+    ui.interfaceSelectButton.disabled = true;
+    ui.captureFilterInput.disabled = true;
     ui.liveCaptureButton.classList.add('btn-loading');
     ui.liveCaptureStatus.textContent = 'STARTING…';
     ui.liveCaptureStatus.classList.add('status-shimmer');
 
     try {
-      const preferredInterface =
-        ((import.meta as any).env?.VITE_CAPTURE_INTERFACE as string | undefined) ?? undefined;
+      const captureFilter = ui.captureFilterInput.value.trim() || undefined;
       const res = await fetch(`${explanationBaseUrl}/capture/start`, {
         method: 'POST',
         headers: withClientHeaders({ 'content-type': 'application/json' }),
         body: JSON.stringify({
-          interface: preferredInterface,
+          interface: selectedInterfaceId,
+          capture_filter: captureFilter,
         }),
       });
       if (!res.ok) {
@@ -2189,11 +2471,15 @@ async function initApp() {
       ui.liveCaptureStatus.textContent = `CAPTURING ON ${liveCaptureInterface.toUpperCase()}`;
       ui.liveCaptureStatus.classList.remove('status-shimmer');
       ui.liveCaptureStatus.classList.add('pulse-attention');
+      
+      startCaptureTimer();
     } catch (err) {
       ui.liveCaptureButton.textContent = 'Live Capture';
       ui.liveCaptureButton.classList.remove('btn-loading');
       ui.openPcapButton.disabled = false;
       ui.liveCaptureButton.disabled = false;
+      ui.interfaceSelectButton.disabled = false;
+      ui.captureFilterInput.disabled = false;
       ui.liveCaptureStatus.textContent = 'READY';
       ui.liveCaptureStatus.classList.remove('status-shimmer');
       alert((err as Error).message ?? String(err));
@@ -2212,6 +2498,9 @@ async function initApp() {
     ui.liveCaptureStatus.textContent = 'STOPPING…';
     ui.liveCaptureStatus.classList.remove('pulse-attention');
     ui.liveCaptureStatus.classList.add('status-shimmer');
+    
+    // Stop the timer
+    stopCaptureTimer();
 
     try {
       const stopRes = await fetch(`${explanationBaseUrl}/capture/stop`, {
@@ -2263,6 +2552,8 @@ async function initApp() {
       ui.liveCaptureButton.classList.remove('btn-loading');
       ui.liveCaptureButton.disabled = false;
       ui.openPcapButton.disabled = false;
+      ui.interfaceSelectButton.disabled = false;
+      ui.captureFilterInput.disabled = false;
       if (stoppedOk) {
         liveCaptureId = null;
         liveCaptureInterface = null;
