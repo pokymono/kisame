@@ -150,7 +150,7 @@ const createWindow = (): BrowserWindow => {
   return win;
 };
 
-ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyzeResult> => {
+ipcMain.handle('kisame:openPcapAndAnalyze', async (_event, clientId?: string): Promise<OpenPcapAndAnalyzeResult> => {
   const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
   const result = await dialog.showOpenDialog(win, {
     title: 'Open PCAP',
@@ -200,6 +200,7 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
       headers: {
         'content-type': 'application/octet-stream',
         'x-filename': path.basename(pcapPath),
+        ...(clientId ? { 'x-client-id': clientId } : {}),
       },
       body: uploadStream,
       // Required for streaming request bodies in Node/Electron fetch.
@@ -218,7 +219,10 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (): Promise<OpenPcapAndAnalyze
 
     const analyzeRes = await fetch(`${bunUrl}/tools/analyzePcap`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(clientId ? { 'x-client-id': clientId } : {}),
+      },
       body: JSON.stringify(analyzeBody),
     });
     if (!analyzeRes.ok) {

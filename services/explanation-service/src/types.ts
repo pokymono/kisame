@@ -4,6 +4,7 @@ export type PcapSession = {
   filePath: string;
   createdAt: string;
   sizeBytes: number;
+  ownerId?: string;
 };
 
 export type AnalysisArtifact = {
