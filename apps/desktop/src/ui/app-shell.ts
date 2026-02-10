@@ -804,7 +804,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   const welcomeBody = el('div', {
     className: 'text-base leading-relaxed text-white/50 max-w-md mx-auto mb-10',
-    text: 'Load a PCAP capture to begin deep packet inspection, session correlation, and AI-powered forensic analysis.',
+    text: 'Import a PCAP for deep packet inspection and session-level analysis. Terminal and AI chat stay available without a capture.',
   });
 
   const accentBar = el('div', {

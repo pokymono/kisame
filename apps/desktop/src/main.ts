@@ -200,6 +200,7 @@ async function initApp() {
       renderInsights();
       renderSessionKey();
     }
+    syncNoCaptureUi();
   }
 
   let explanationBaseUrl =
@@ -240,6 +241,19 @@ async function initApp() {
   let chatHistoryIndex = -1;
   let chatCurrentDraft = '';
   let chatAbortController: AbortController | null = null;
+  const defaultChatPlaceholder = ui.chatInput.placeholder || 'Press / to focus...';
+  let noCaptureHintShown = false;
+
+  const hasCaptureContext = () => Boolean(analysis && analysis.sessions.length > 0);
+
+  function syncNoCaptureUi() {
+    const hasCapture = hasCaptureContext();
+    const showWelcome = !hasCapture && analyzeScreen !== 'terminal';
+    setWelcomeVisible(showWelcome);
+    ui.chatInput.placeholder = hasCapture
+      ? defaultChatPlaceholder
+      : 'Ask anything. Import a PCAP for capture-specific analysis.';
+  }
 
   type Workspace = { id: string; name: string };
   type CaseFile = { id: string; name: string; workspaceId: string; createdAt: string };
@@ -2179,13 +2193,15 @@ async function initApp() {
     lastAnalysisRef = null;
     captureSessionId = null;
     updateExplorerSelection();
-    setWelcomeVisible(true);
-    
-    // Add entrance animation to welcome panel
-    ui.welcomePanel.classList.add('animate-fade-in-up');
-    setTimeout(() => {
-      ui.welcomePanel.classList.remove('animate-fade-in-up');
-    }, 300);
+    syncNoCaptureUi();
+
+    if (!ui.welcomePanel.classList.contains('hidden')) {
+      // Add entrance animation to welcome panel
+      ui.welcomePanel.classList.add('animate-fade-in-up');
+      setTimeout(() => {
+        ui.welcomePanel.classList.remove('animate-fade-in-up');
+      }, 300);
+    }
   }
   
   function showInterfaceModal() {
@@ -3124,7 +3140,8 @@ async function initApp() {
       return;
     }
 
-    setWelcomeVisible(false);
+    noCaptureHintShown = false;
+    syncNoCaptureUi();
 
     ui.captureBadge.textContent = analysis.pcap?.file_name
       ? `${analysis.pcap.file_name} (${analysis.pcap.packets_analyzed ?? 0} pkts)`
@@ -3435,6 +3452,14 @@ async function initApp() {
 
   async function sendChatQueryText(query: string, options?: { displayText?: string; contextMode?: WorkflowContextMode }) {
     if (!query) return;
+
+    if (!hasCaptureContext() && !noCaptureHintShown) {
+      noCaptureHintShown = true;
+      chatManager.addMessage({
+        role: 'ai',
+        text: 'No PCAP is loaded yet. I can still answer general questions, but capture-specific analysis needs an imported PCAP.',
+      });
+    }
 
     // History push
     chatHistory.push(query);
