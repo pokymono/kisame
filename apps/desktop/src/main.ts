@@ -171,9 +171,16 @@ async function initApp() {
   let chatAbortController: AbortController | null = null;
 
   type Workspace = { id: string; name: string };
+  type CaseFile = { id: string; name: string; workspaceId: string; createdAt: string };
+
   const workspaceStorageKey = 'kisame.workspaces';
   const workspaceSelectedKey = 'kisame.workspace.selected';
   const workspaceAssignmentKey = 'kisame.workspace.assignments';
+  const caseStorageKey = 'kisame.cases';
+  const caseSelectedKey = 'kisame.case.selected';
+  const caseAssignmentKey = 'kisame.case.assignments';
+  const workspaceExpandedKey = 'kisame.workspace.expanded';
+  const caseExpandedKey = 'kisame.case.expanded';
   const clientIdKey = 'kisame.client.id';
 
   const resolveClientId = (): string => {
@@ -208,6 +215,23 @@ async function initApp() {
     window.localStorage.setItem(workspaceStorageKey, JSON.stringify(workspaces));
   };
 
+  const loadCases = (): CaseFile[] => {
+    const raw = window.localStorage.getItem(caseStorageKey);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw) as CaseFile[];
+      return Array.isArray(parsed)
+        ? parsed.filter((c) => c && c.id && c.name && c.workspaceId)
+        : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const saveCases = (cases: CaseFile[]) => {
+    window.localStorage.setItem(caseStorageKey, JSON.stringify(cases));
+  };
+
   const loadWorkspaceAssignments = (): Record<string, string> => {
     const raw = window.localStorage.getItem(workspaceAssignmentKey);
     if (!raw) return {};
@@ -223,11 +247,59 @@ async function initApp() {
     window.localStorage.setItem(workspaceAssignmentKey, JSON.stringify(assignments));
   };
 
+  const loadCaseAssignments = (): Record<string, string> => {
+    const raw = window.localStorage.getItem(caseAssignmentKey);
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const saveCaseAssignments = (assignments: Record<string, string>) => {
+    window.localStorage.setItem(caseAssignmentKey, JSON.stringify(assignments));
+  };
+
+  const loadExpandedSet = (key: string): Set<string> => {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return new Set();
+    try {
+      const parsed = JSON.parse(raw) as string[];
+      return Array.isArray(parsed) ? new Set(parsed.filter((v) => typeof v === 'string')) : new Set();
+    } catch {
+      return new Set();
+    }
+  };
+
+  const saveExpandedSet = (key: string, value: Set<string>) => {
+    window.localStorage.setItem(key, JSON.stringify(Array.from(value)));
+  };
+
   let workspaces: Workspace[] = loadWorkspaces();
   if (!workspaces.find((w) => w.id === 'default')) {
     workspaces = [{ id: 'default', name: 'Default Workspace' }, ...workspaces];
   }
   saveWorkspaces(workspaces);
+
+  let cases: CaseFile[] = loadCases();
+
+  const ensureDefaultCaseForWorkspace = (workspaceId: string) => {
+    if (cases.some((c) => c.workspaceId === workspaceId)) return;
+    const newCase: CaseFile = {
+      id: crypto.randomUUID(),
+      name: 'General',
+      workspaceId,
+      createdAt: new Date().toISOString(),
+    };
+    cases = [...cases, newCase];
+    saveCases(cases);
+  };
+
+  for (const workspace of workspaces) {
+    ensureDefaultCaseForWorkspace(workspace.id);
+  }
 
   let selectedWorkspaceId =
     window.localStorage.getItem(workspaceSelectedKey) ?? workspaces[0]?.id ?? 'default';
@@ -235,39 +307,178 @@ async function initApp() {
     selectedWorkspaceId = 'default';
   }
   let workspaceAssignments = loadWorkspaceAssignments();
-  let lastWorkspaceId = selectedWorkspaceId;
+  let caseAssignments = loadCaseAssignments();
+  let lastWorkspaceId = selectedWorkspaceId === 'all' ? 'default' : selectedWorkspaceId;
+  let selectedCaseId = window.localStorage.getItem(caseSelectedKey);
+  let uploadWorkspacePrompt = false;
+  let pendingUploadAfterWorkspaceSelect = false;
+
+  let expandedWorkspaceIds = loadExpandedSet(workspaceExpandedKey);
+  let expandedCaseIds = loadExpandedSet(caseExpandedKey);
+  if (!expandedWorkspaceIds.size) {
+    expandedWorkspaceIds = new Set(workspaces.map((w) => w.id));
+    saveExpandedSet(workspaceExpandedKey, expandedWorkspaceIds);
+  }
+
+  const getCasesForWorkspace = (workspaceId: string) =>
+    cases
+      .filter((c) => c.workspaceId === workspaceId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  const getDefaultCaseId = (workspaceId: string) => {
+    ensureDefaultCaseForWorkspace(workspaceId);
+    return getCasesForWorkspace(workspaceId)[0]?.id ?? '';
+  };
+
+  const normalizeSelectedCase = () => {
+    if (selectedCaseId && cases.some((c) => c.id === selectedCaseId)) {
+      if (selectedWorkspaceId === 'all') {
+        window.localStorage.setItem(caseSelectedKey, selectedCaseId);
+        return;
+      }
+      const selectedCase = cases.find((c) => c.id === selectedCaseId);
+      if (selectedCase?.workspaceId === selectedWorkspaceId) {
+        window.localStorage.setItem(caseSelectedKey, selectedCaseId);
+        return;
+      }
+    }
+    const workspaceId = selectedWorkspaceId === 'all' ? lastWorkspaceId : selectedWorkspaceId;
+    selectedCaseId = getDefaultCaseId(workspaceId);
+    window.localStorage.setItem(caseSelectedKey, selectedCaseId);
+  };
+
+  normalizeSelectedCase();
+
+  let caseDraftWorkspaceId: string | null = null;
+  let caseDraftNeedsFocus = false;
+
+  const clearCaseDraft = () => {
+    caseDraftWorkspaceId = null;
+    caseDraftNeedsFocus = false;
+  };
+
+  const updateWorkspaceAttention = () => {
+    ui.workspaceSelectButton.classList.toggle(
+      'workspace-attention',
+      uploadWorkspacePrompt || pendingUploadAfterWorkspaceSelect
+    );
+  };
+
+  const createCaseForWorkspace = (name: string, workspaceId: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      clearCaseDraft();
+      renderExplorerCaptures();
+      return;
+    }
+    const newCase: CaseFile = {
+      id: crypto.randomUUID(),
+      name: trimmed,
+      workspaceId,
+      createdAt: new Date().toISOString(),
+    };
+    cases = [...cases, newCase];
+    saveCases(cases);
+    selectedCaseId = newCase.id;
+    window.localStorage.setItem(caseSelectedKey, selectedCaseId);
+    expandedWorkspaceIds.add(workspaceId);
+    expandedCaseIds.add(newCase.id);
+    saveExpandedSet(workspaceExpandedKey, expandedWorkspaceIds);
+    saveExpandedSet(caseExpandedKey, expandedCaseIds);
+    clearCaseDraft();
+    renderExplorerCaptures();
+  };
+
+  const setWorkspaceExpanded = (workspaceId: string, expanded: boolean) => {
+    if (expanded) {
+      expandedWorkspaceIds.add(workspaceId);
+    } else {
+      expandedWorkspaceIds.delete(workspaceId);
+    }
+    saveExpandedSet(workspaceExpandedKey, expandedWorkspaceIds);
+  };
+
+  const setCaseExpanded = (caseId: string, expanded: boolean) => {
+    if (expanded) {
+      expandedCaseIds.add(caseId);
+    } else {
+      expandedCaseIds.delete(caseId);
+    }
+    saveExpandedSet(caseExpandedKey, expandedCaseIds);
+  };
+
+  let workspaceMenuOpen = false;
+  const setWorkspaceMenuOpen = (open: boolean) => {
+    workspaceMenuOpen = open;
+    ui.workspaceSelectMenu.classList.toggle('hidden', !open);
+    ui.workspaceSelectButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+  };
 
   const renderWorkspaceOptions = () => {
-    ui.workspaceSelect.replaceChildren();
-    ui.workspaceSelect.add(new Option('ALL WORKSPACES', 'all'));
+    ui.workspaceSelectMenu.replaceChildren();
+
+    const addOption = (label: string, value: string) => {
+      const option = el('button', {
+        className:
+          'workspace-option w-full text-left px-2.5 py-2 rounded text-[10px] font-[var(--font-mono)] tracking-wider transition-all',
+        text: label,
+        attrs: { type: 'button', 'data-workspace-value': value },
+      });
+      if (value === selectedWorkspaceId) option.classList.add('active');
+      ui.workspaceSelectMenu.append(option);
+    };
+
+    addOption('ALL WORKSPACES', 'all');
     for (const workspace of workspaces) {
-      const option = new Option(workspace.name.toUpperCase(), workspace.id);
-      ui.workspaceSelect.add(option);
+      addOption(workspace.name.toUpperCase(), workspace.id);
     }
-    ui.workspaceSelect.add(new Option('ADD WORKSPACE…', '__add__'));
-    ui.workspaceSelect.value = selectedWorkspaceId;
+    addOption('ADD WORKSPACE…', '__add__');
+
+    const selectedLabel =
+      selectedWorkspaceId === 'all'
+        ? 'ALL WORKSPACES'
+        : (workspaces.find((w) => w.id === selectedWorkspaceId)?.name ?? 'DEFAULT WORKSPACE').toUpperCase();
+    ui.workspaceSelectButton.textContent = selectedLabel;
   };
 
   const assignWorkspaceIfMissing = (sessionId: string) => {
     if (!workspaceAssignments[sessionId]) {
-      workspaceAssignments[sessionId] = selectedWorkspaceId === 'all' ? 'default' : selectedWorkspaceId;
+      workspaceAssignments[sessionId] =
+        selectedWorkspaceId === 'all' ? 'default' : selectedWorkspaceId;
     }
   };
 
-  const filterByWorkspace = (captures: ExplorerCapture[]) => {
-    if (selectedWorkspaceId === 'all') return captures;
-    return captures.filter((capture) => {
-      const workspaceId = workspaceAssignments[capture.session_id] ?? 'default';
-      return workspaceId === selectedWorkspaceId;
-    });
+  const assignCaseIfMissing = (sessionId: string, workspaceId: string) => {
+    if (caseAssignments[sessionId]) return;
+    const selectedCase = selectedCaseId ? cases.find((c) => c.id === selectedCaseId) : null;
+    if (selectedCase && selectedCase.workspaceId === workspaceId) {
+      caseAssignments[sessionId] = selectedCase.id;
+    } else {
+      caseAssignments[sessionId] = getDefaultCaseId(workspaceId);
+    }
+  };
+
+  const getVisibleWorkspaces = () => {
+    if (selectedWorkspaceId === 'all') return workspaces;
+    return workspaces.filter((w) => w.id === selectedWorkspaceId);
   };
 
   renderWorkspaceOptions();
 
-  ui.workspaceSelect.addEventListener('change', () => {
-    const value = ui.workspaceSelect.value;
+  ui.workspaceSelectButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setWorkspaceMenuOpen(!workspaceMenuOpen);
+  });
+
+
+  ui.workspaceSelectMenu.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest('[data-workspace-value]') as HTMLElement | null;
+    const value = button?.getAttribute('data-workspace-value');
+    if (!value) return;
+
     if (value === '__add__') {
-      ui.workspaceSelect.value = lastWorkspaceId;
+      setWorkspaceMenuOpen(false);
       ui.workspaceForm.classList.remove('hidden');
       ui.workspaceForm.classList.add('flex');
       ui.workspaceInput.value = '';
@@ -275,12 +486,33 @@ async function initApp() {
       return;
     }
 
-    lastWorkspaceId = value;
+    lastWorkspaceId = value === 'all' ? lastWorkspaceId : value;
     selectedWorkspaceId = value;
     window.localStorage.setItem(workspaceSelectedKey, selectedWorkspaceId);
+    normalizeSelectedCase();
+    if (value !== 'all') {
+      uploadWorkspacePrompt = false;
+      updateWorkspaceAttention();
+    }
+    clearCaseDraft();
     ui.workspaceForm.classList.add('hidden');
     ui.workspaceForm.classList.remove('flex');
+    renderWorkspaceOptions();
     renderExplorerCaptures();
+    setWorkspaceMenuOpen(false);
+
+    if (value !== 'all' && pendingUploadAfterWorkspaceSelect) {
+      pendingUploadAfterWorkspaceSelect = false;
+      updateWorkspaceAttention();
+      queueMicrotask(() => ui.openPcapButton.click());
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (!workspaceMenuOpen) return;
+    if (ui.workspaceSelectButton.contains(target) || ui.workspaceSelectMenu.contains(target)) return;
+    setWorkspaceMenuOpen(false);
   });
 
   const submitWorkspace = () => {
@@ -292,9 +524,11 @@ async function initApp() {
     const id = crypto.randomUUID();
     workspaces = [...workspaces, { id, name }];
     saveWorkspaces(workspaces);
+    ensureDefaultCaseForWorkspace(id);
     selectedWorkspaceId = id;
     lastWorkspaceId = id;
     window.localStorage.setItem(workspaceSelectedKey, selectedWorkspaceId);
+    normalizeSelectedCase();
     ui.workspaceForm.classList.add('hidden');
     ui.workspaceForm.classList.remove('flex');
     renderWorkspaceOptions();
@@ -306,7 +540,6 @@ async function initApp() {
     ui.workspaceForm.classList.add('hidden');
     ui.workspaceForm.classList.remove('flex');
     ui.workspaceInput.value = '';
-    ui.workspaceSelect.value = selectedWorkspaceId;
   });
   ui.workspaceInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
@@ -316,8 +549,17 @@ async function initApp() {
       ui.workspaceForm.classList.add('hidden');
       ui.workspaceForm.classList.remove('flex');
       ui.workspaceInput.value = '';
-      ui.workspaceSelect.value = selectedWorkspaceId;
     }
+  });
+
+  ui.caseTriggerButton.addEventListener('click', () => {
+    const workspaceId = selectedWorkspaceId === 'all' ? lastWorkspaceId : selectedWorkspaceId;
+    if (!workspaceId) return;
+    caseDraftWorkspaceId = workspaceId;
+    caseDraftNeedsFocus = true;
+    expandedWorkspaceIds.add(workspaceId);
+    saveExpandedSet(workspaceExpandedKey, expandedWorkspaceIds);
+    renderExplorerCaptures();
   });
 
   const sessionElements = new Map<string, HTMLElement>();
@@ -331,6 +573,7 @@ async function initApp() {
   };
 
   let explorerCaptures: ExplorerCapture[] = [];
+  let explorerForceEmptyState = false;
   let uploadIndicatorTimer: number | null = null;
 
   void refreshExplorerCaptures();
@@ -928,42 +1171,210 @@ async function initApp() {
     }
   }
 
+  const setExplorerPromptVisible = (visible: boolean) => {
+    ui.explorerPrompt.classList.toggle('hidden', !visible);
+  };
+
   function renderExplorerCaptures() {
     explorerElements.clear();
-
-    const visibleCaptures = filterByWorkspace(explorerCaptures);
-
-    if (!visibleCaptures.length) {
+    setExplorerPromptVisible(uploadWorkspacePrompt);
+    if (explorerForceEmptyState) {
       ui.explorerList.replaceChildren(ui.explorerEmptyState);
       return;
     }
 
-    const rows = visibleCaptures.map((capture) => {
-      const row = el('button', {
-        className: 'w-full rounded px-3 py-2 text-left transition-all data-card',
-        attrs: { type: 'button', 'data-capture-id': capture.session_id },
-      });
+    const visibleWorkspaces = getVisibleWorkspaces();
+    const captureBuckets = new Map<string, ExplorerCapture[]>();
+    for (const capture of explorerCaptures) {
+      const workspaceId = workspaceAssignments[capture.session_id] ?? 'default';
+      const bucket = captureBuckets.get(workspaceId);
+      if (bucket) {
+        bucket.push(capture);
+      } else {
+        captureBuckets.set(workspaceId, [capture]);
+      }
+    }
 
-      const header = el('div', { className: 'flex items-center justify-between' });
-      const name = el('div', {
-        className: 'text-[11px] font-[var(--font-mono)] text-white/80 truncate',
-        text: capture.file_name,
+    const rows: HTMLElement[] = [];
+
+    for (const workspace of visibleWorkspaces) {
+      const workspaceId = workspace.id;
+      const workspaceCaptures = captureBuckets.get(workspaceId) ?? [];
+      const workspaceExpanded = expandedWorkspaceIds.has(workspaceId);
+
+      const workspaceRow = el('button', {
+        className:
+          'explorer-node explorer-node--workspace w-full rounded px-3 py-2 text-left transition-all',
+        attrs: {
+          type: 'button',
+          'data-node-kind': 'workspace',
+          'data-workspace-id': workspaceId,
+          'data-expanded': workspaceExpanded ? 'true' : 'false',
+        },
       });
-      const size = el('div', {
+      if (selectedWorkspaceId !== 'all' && selectedWorkspaceId === workspaceId) {
+        workspaceRow.classList.add('is-selected');
+      }
+
+      const workspaceLeft = el('div', { className: 'flex items-center gap-2 min-w-0' });
+      const workspaceToggle = el('span', {
+        className: 'explorer-toggle text-white/40',
+        text: workspaceExpanded ? '▾' : '▸',
+      });
+      const workspaceLabel = el('span', {
+        className: 'text-[10px] font-[var(--font-mono)] tracking-wider text-white/70 uppercase truncate',
+        text: workspace.name,
+      });
+      workspaceLeft.append(workspaceToggle, workspaceLabel);
+
+      const workspaceCount = el('span', {
         className: 'text-[9px] font-[var(--font-mono)] text-white/35',
-        text: formatBytes(capture.size_bytes ?? 0),
-      });
-      header.append(name, size);
-
-      const meta = el('div', {
-        className: 'mt-1 text-[9px] font-[var(--font-mono)] text-white/30',
-        text: new Date(capture.created_at).toISOString().replace('T', ' ').replace('Z', 'Z'),
+        text: `${workspaceCaptures.length}`,
       });
 
-      row.append(header, meta);
-      explorerElements.set(capture.session_id, row);
-      return row;
-    });
+      const workspaceRowInner = el('div', {
+        className: 'flex items-center justify-between w-full',
+        children: [workspaceLeft, workspaceCount],
+      });
+      workspaceRow.append(workspaceRowInner);
+      rows.push(workspaceRow);
+
+      if (!workspaceExpanded) continue;
+
+      const workspaceCases = getCasesForWorkspace(workspaceId);
+      const caseBuckets = new Map<string, ExplorerCapture[]>();
+      for (const capture of workspaceCaptures) {
+        const assignedCaseId = caseAssignments[capture.session_id] ?? getDefaultCaseId(workspaceId);
+        const bucket = caseBuckets.get(assignedCaseId);
+        if (bucket) bucket.push(capture);
+        else caseBuckets.set(assignedCaseId, [capture]);
+      }
+
+      if (caseDraftWorkspaceId === workspaceId) {
+        const draftRow = el('div', {
+          className:
+            'explorer-node explorer-node--case explorer-node--draft w-full rounded px-3 py-2 text-left transition-all',
+          attrs: { 'data-case-draft': 'true' },
+        });
+        const draftInner = el('div', { className: 'pl-4' });
+        const draftInput = el('input', {
+          className:
+            'explorer-inline-input w-full bg-transparent text-[11px] font-[var(--font-mono)] tracking-wider text-white/80 focus:outline-none',
+          attrs: { type: 'text', placeholder: 'New case name' },
+        }) as HTMLInputElement;
+        let committed = false;
+        const commit = () => {
+          if (committed) return;
+          committed = true;
+          createCaseForWorkspace(draftInput.value, workspaceId);
+        };
+        draftInput.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            commit();
+          } else if (event.key === 'Escape') {
+            event.preventDefault();
+            clearCaseDraft();
+            renderExplorerCaptures();
+          }
+        });
+        draftInput.addEventListener('blur', () => {
+          commit();
+        });
+        draftInner.append(draftInput);
+        draftRow.append(draftInner);
+        rows.push(draftRow);
+        if (caseDraftNeedsFocus) {
+          caseDraftNeedsFocus = false;
+          requestAnimationFrame(() => {
+            draftInput.focus();
+            draftInput.select();
+          });
+        }
+      }
+
+      for (const caseFile of workspaceCases) {
+        const caseId = caseFile.id;
+        const caseCaptures = caseBuckets.get(caseId) ?? [];
+        const caseExpanded = expandedCaseIds.has(caseId);
+        const caseRow = el('button', {
+          className:
+            'explorer-node explorer-node--case w-full rounded px-3 py-2 text-left transition-all',
+          attrs: {
+            type: 'button',
+            'data-node-kind': 'case',
+            'data-case-id': caseId,
+            'data-workspace-id': workspaceId,
+            'data-expanded': caseExpanded ? 'true' : 'false',
+          },
+        });
+        if (selectedCaseId === caseId) {
+          caseRow.classList.add('is-selected');
+        }
+
+        const caseLeft = el('div', { className: 'flex items-center gap-2 min-w-0' });
+        const caseToggle = el('span', {
+          className: 'explorer-toggle text-white/30',
+          text: caseExpanded ? '▾' : '▸',
+        });
+        const caseLabel = el('span', {
+          className: 'text-[10px] font-[var(--font-mono)] tracking-wider text-white/60 uppercase truncate',
+          text: caseFile.name,
+        });
+        caseLeft.append(caseToggle, caseLabel);
+
+        const caseCount = el('span', {
+          className: 'text-[9px] font-[var(--font-mono)] text-white/30',
+          text: `${caseCaptures.length}`,
+        });
+
+        const caseRowInner = el('div', {
+          className: 'flex items-center justify-between w-full pl-4',
+          children: [caseLeft, caseCount],
+        });
+        caseRow.append(caseRowInner);
+        rows.push(caseRow);
+
+        if (!caseExpanded) continue;
+
+        if (!caseCaptures.length) {
+          const emptyRow = el('div', {
+            className: 'pl-8 py-1 text-[9px] font-[var(--font-mono)] text-white/20 uppercase tracking-wider',
+            text: 'No captures yet',
+          });
+          rows.push(emptyRow);
+          continue;
+        }
+
+        for (const capture of caseCaptures) {
+          const row = el('button', {
+            className:
+              'w-full rounded px-3 py-2 text-left transition-all data-card pl-10',
+            attrs: { type: 'button', 'data-capture-id': capture.session_id },
+          });
+
+          const header = el('div', { className: 'flex items-center justify-between' });
+          const name = el('div', {
+            className: 'text-[11px] font-[var(--font-mono)] text-white/80 truncate',
+            text: capture.file_name,
+          });
+          const size = el('div', {
+            className: 'text-[9px] font-[var(--font-mono)] text-white/35',
+            text: formatBytes(capture.size_bytes ?? 0),
+          });
+          header.append(name, size);
+
+          const meta = el('div', {
+            className: 'mt-1 text-[9px] font-[var(--font-mono)] text-white/30',
+            text: new Date(capture.created_at).toISOString().replace('T', ' ').replace('Z', 'Z'),
+          });
+
+          row.append(header, meta);
+          explorerElements.set(capture.session_id, row);
+          rows.push(row);
+        }
+      }
+    }
 
     ui.explorerList.replaceChildren(...rows);
     updateExplorerSelection();
@@ -977,6 +1388,7 @@ async function initApp() {
       if (!res.ok) {
         if (res.status === 404) {
           explorerCaptures = [];
+          explorerForceEmptyState = true;
           setExplorerEmptyState(
             'EXPLORER UNAVAILABLE',
             'Update the backend service.'
@@ -994,8 +1406,12 @@ async function initApp() {
       );
       for (const capture of explorerCaptures) {
         assignWorkspaceIfMissing(capture.session_id);
+        const workspaceId = workspaceAssignments[capture.session_id] ?? 'default';
+        assignCaseIfMissing(capture.session_id, workspaceId);
       }
       saveWorkspaceAssignments(workspaceAssignments);
+      saveCaseAssignments(caseAssignments);
+      explorerForceEmptyState = false;
       setExplorerEmptyState(
         'NO FILES',
         'Open a PCAP file to begin forensic analysis'
@@ -1003,6 +1419,7 @@ async function initApp() {
       renderExplorerCaptures();
     } catch {
       explorerCaptures = [];
+      explorerForceEmptyState = true;
       setExplorerEmptyState(
         'EXPLORER UNAVAILABLE',
         'Unable to fetch captures from the analysis service'
@@ -1851,24 +2268,61 @@ async function initApp() {
 
   ui.explorerList.addEventListener('click', async (event) => {
     const target = event.target as HTMLElement | null;
-    const row = target?.closest('[data-capture-id]') as HTMLElement | null;
-    const id = row?.getAttribute('data-capture-id');
-    if (!id) return;
-    if (id === captureSessionId && analysis) {
-      setActiveTab('analyze');
+    const captureRow = target?.closest('[data-capture-id]') as HTMLElement | null;
+    if (captureRow) {
+      const id = captureRow.getAttribute('data-capture-id');
+      if (!id) return;
+      if (id === captureSessionId && analysis) {
+        setActiveTab('analyze');
+        return;
+      }
+      try {
+        captureRow.classList.add('opacity-60');
+        await analyzeExplorerCapture(id);
+      } catch (err) {
+        alert((err as Error).message ?? String(err));
+      } finally {
+        captureRow.classList.remove('opacity-60');
+      }
       return;
     }
-    try {
-      row?.classList.add('opacity-60');
-      await analyzeExplorerCapture(id);
-    } catch (err) {
-      alert((err as Error).message ?? String(err));
-    } finally {
-      row?.classList.remove('opacity-60');
+
+    const caseRow = target?.closest('[data-node-kind="case"]') as HTMLElement | null;
+    if (caseRow) {
+      const caseId = caseRow.getAttribute('data-case-id');
+      if (!caseId) return;
+      const workspaceId = caseRow.getAttribute('data-workspace-id') ?? '';
+      selectedCaseId = caseId;
+      window.localStorage.setItem(caseSelectedKey, selectedCaseId);
+      const isExpanded = expandedCaseIds.has(caseId);
+      setCaseExpanded(caseId, !isExpanded);
+      if (workspaceId) {
+        expandedWorkspaceIds.add(workspaceId);
+        saveExpandedSet(workspaceExpandedKey, expandedWorkspaceIds);
+      }
+      renderExplorerCaptures();
+      return;
+    }
+
+    const workspaceRow = target?.closest('[data-node-kind="workspace"]') as HTMLElement | null;
+    if (workspaceRow) {
+      const workspaceId = workspaceRow.getAttribute('data-workspace-id');
+      if (!workspaceId) return;
+      const isExpanded = expandedWorkspaceIds.has(workspaceId);
+      setWorkspaceExpanded(workspaceId, !isExpanded);
+      renderExplorerCaptures();
     }
   });
 
   ui.explorerAddButton.addEventListener('click', () => {
+    if (selectedWorkspaceId === 'all') {
+      uploadWorkspacePrompt = true;
+      pendingUploadAfterWorkspaceSelect = true;
+      updateWorkspaceAttention();
+      setWorkspaceMenuOpen(true);
+      renderExplorerCaptures();
+      return;
+    }
     ui.openPcapButton.click();
   });
 

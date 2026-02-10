@@ -40,11 +40,14 @@ export type AppShellRefs = {
   explorerEmptyState: HTMLElement;
   explorerAddButton: HTMLButtonElement;
   explorerRefreshButton: HTMLButtonElement;
-  workspaceSelect: HTMLSelectElement;
+  explorerPrompt: HTMLElement;
+  workspaceSelectButton: HTMLButtonElement;
+  workspaceSelectMenu: HTMLElement;
   workspaceForm: HTMLElement;
   workspaceInput: HTMLInputElement;
   workspaceAddButton: HTMLButtonElement;
   workspaceCancelButton: HTMLButtonElement;
+  caseTriggerButton: HTMLButtonElement;
   uploadIndicator: HTMLElement;
   chatMessages: HTMLElement;
   chatEmptyState: HTMLElement;
@@ -341,19 +344,48 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   sidebarHeader.append(explorerTitle, explorerActions);
 
-  const folderRow = el('div', {
-    className: 'mx-3 mt-3 flex items-center gap-2 rounded px-3 py-2 bg-[var(--app-surface)] border border-[var(--app-line)] hover:border-[var(--app-line-strong)] transition-colors',
+  const explorerPrompt = el('div', {
+    className:
+      'hidden mx-4 mb-3 rounded px-3 py-2 text-[10px] font-[var(--font-mono)] text-white/70 border border-[var(--app-line)] bg-[var(--app-surface)]/70',
   });
-  
+  const explorerPromptText = el('div', {
+    text: 'Select a workspace to add a capture.',
+  });
+  explorerPrompt.append(explorerPromptText);
+
+  const workspacePicker = el('div', {
+    className: 'mx-3 mt-3 relative',
+  });
+
+  const folderRow = el('div', {
+    className:
+      'flex items-center gap-2 rounded px-3 py-2 bg-[var(--app-surface)] border border-[var(--app-line)] hover:border-[var(--app-line-strong)] transition-colors',
+  });
+
   const folderIconSmall = iconFolder();
   folderIconSmall.classList.add('size-3.5', 'text-[var(--accent-cyan)]/70');
-  
-  const folderSelect = el('select', {
-    className: 'flex-1 bg-transparent text-[11px] font-[var(--font-mono)] tracking-wider text-white/70 focus:outline-none cursor-pointer',
-  }) as HTMLSelectElement;
-  folderSelect.append(new Option('DEFAULT WORKSPACE', 'default'));
-  
-  folderRow.append(folderIconSmall, folderSelect);
+
+  const folderSelectButton = el('button', {
+    className:
+      'flex-1 bg-transparent text-[11px] font-[var(--font-mono)] tracking-wider text-white/70 focus:outline-none cursor-pointer text-left',
+    text: 'DEFAULT WORKSPACE',
+    attrs: { type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
+  }) as HTMLButtonElement;
+
+  const folderChevron = el('span', {
+    className: 'text-[9px] text-white/30',
+    text: '▾',
+  });
+
+  folderRow.append(folderIconSmall, folderSelectButton, folderChevron);
+
+  const workspaceSelectMenu = el('div', {
+    className:
+      'workspace-select-menu hidden absolute left-0 top-full mt-2 w-full rounded border border-[var(--app-line)] bg-[var(--app-surface)] shadow-lg shadow-black/30 z-20 p-1 space-y-1',
+    attrs: { role: 'menu' },
+  });
+
+  workspacePicker.append(folderRow, workspaceSelectMenu);
 
   const workspaceForm = el('div', {
     className: 'mx-3 mt-2 hidden items-center gap-2 rounded px-2 py-2 bg-[var(--app-surface)] border border-[var(--app-line)]',
@@ -375,6 +407,22 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     attrs: { type: 'button' },
   }) as HTMLButtonElement;
   workspaceForm.append(workspaceInput, workspaceAddButton, workspaceCancelButton);
+
+  const caseRow = el('div', {
+    className:
+      'mx-3 mt-2 rounded px-3 py-2 bg-[var(--app-surface)] border border-[var(--app-line)] flex items-center justify-between',
+  });
+  const caseLabel = el('span', {
+    className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-white/40 uppercase',
+    text: 'Cases',
+  });
+  const caseTriggerButton = el('button', {
+    className:
+      'px-2 py-1 text-[9px] font-[var(--font-display)] tracking-[0.18em] text-[var(--accent-teal)] border border-[var(--accent-teal)]/30 rounded hover:bg-[var(--accent-teal)]/10 transition-all uppercase',
+    text: '+ Case',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  caseRow.append(caseLabel, caseTriggerButton);
 
   const fileList = el('div', {
     className: 'flex-1 px-3 py-3 text-xs space-y-1 overflow-y-auto',
@@ -398,7 +446,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   emptyState.append(emptyIcon, emptyTitle, emptySubtitle);
   fileList.append(emptyState);
 
-  sidebar.append(sidebarHeader, folderRow, workspaceForm, fileList);
+  sidebar.append(sidebarHeader, explorerPrompt, workspacePicker, workspaceForm, caseRow, fileList);
 
   const analysisMain = el('section', {
     className:
@@ -1310,11 +1358,14 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     explorerEmptyState: emptyState,
     explorerAddButton,
     explorerRefreshButton,
-    workspaceSelect: folderSelect,
+    explorerPrompt,
+    workspaceSelectButton: folderSelectButton,
+    workspaceSelectMenu,
     workspaceForm,
     workspaceInput,
     workspaceAddButton,
     workspaceCancelButton,
+    caseTriggerButton,
     uploadIndicator,
     chatMessages,
     chatEmptyState,
