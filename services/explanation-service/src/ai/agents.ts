@@ -81,7 +81,7 @@ function createSpecialistAgent(
   const minToolCalls =
     route === 'summary' ? 0 : Number(process.env.KISAME_MIN_TOOL_CALLS ?? '0');
   const maxSteps = Math.max(18, Number.isFinite(minToolCalls) ? minToolCalls + 6 : 18);
-  const reasoningSummary = process.env.KISAME_REASONING_SUMMARY ?? 'auto';
+  const reasoningSummary = process.env.KISAME_REASONING_SUMMARY ?? 'detailed';
   const reasoningEffort = process.env.KISAME_REASONING_EFFORT ?? 'high';
   const forceReasoning =
     process.env.KISAME_FORCE_REASONING === 'false'
@@ -89,6 +89,7 @@ function createSpecialistAgent(
       : process.env.KISAME_FORCE_REASONING
         ? process.env.KISAME_FORCE_REASONING === 'true'
         : true;
+  const serviceTier = process.env.KISAME_SERVICE_TIER === 'flex'
   const requestedPlan = (planActions && planActions.length ? planActions : DEFAULT_ROUTE_PLANS[route]).filter(
     (action): action is RouterPlanAction => Boolean(action)
   );
@@ -125,9 +126,9 @@ function createSpecialistAgent(
     tools: scopedTools,
     providerOptions: {
       openai: {
+        ...(serviceTier ? { serviceTier } : {}),
         ...(reasoningSummary ? { reasoningSummary } : {}),
         ...(reasoningEffort ? { reasoningEffort } : {}),
-        ...(forceReasoning ? { forceReasoning: true } : {}),
       },
     },
     stopWhen: stepCountIs(maxSteps),
