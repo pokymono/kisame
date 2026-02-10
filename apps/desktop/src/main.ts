@@ -2381,7 +2381,6 @@ async function initApp() {
     }
   });
   
-  // Close on escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !ui.interfaceModalOverlay.classList.contains('hidden')) {
       hideInterfaceModal();
@@ -2412,7 +2411,6 @@ async function initApp() {
         if (typeof data.packet_count === 'number') {
           ui.livePacketCount.textContent = formatPacketCount(data.packet_count);
         } else if (data.size_bytes !== undefined && data.size_bytes > 0) {
-          // Fallback: display file size as a proxy for captured data
           ui.livePacketCount.textContent = formatBytes(data.size_bytes);
         }
 
@@ -3721,7 +3719,6 @@ async function initApp() {
     void performExport(true);
   });
 
-  // ============ Multi-Terminal System ============
   interface TerminalInstance {
     id: string;
     name: string;
@@ -3735,22 +3732,20 @@ async function initApp() {
   let activeTerminalId: string | null = null;
   let activeSplitTerminalId: string | null = null;
   let terminalCounter = 0;
+  let terminalErrorContainer: HTMLElement | null = null;
 
   function createTerminalTab(instance: TerminalInstance): HTMLElement {
     const tab = document.createElement('div');
     tab.className = 'flex items-center gap-1.5 px-2 py-1 rounded text-xs cursor-pointer transition-colors group';
     tab.dataset.terminalId = instance.id;
     
-    // Terminal icon
     const icon = document.createElement('span');
     icon.innerHTML = `<svg class="size-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>`;
     
-    // Name
     const name = document.createElement('span');
     name.className = 'truncate max-w-[80px]';
     name.textContent = instance.name;
     
-    // Close button
     const closeBtn = document.createElement('button');
     closeBtn.className = 'size-4 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-white/20 text-white/40 hover:text-white transition-all';
     closeBtn.innerHTML = `<svg class="size-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>`;
@@ -3784,7 +3779,6 @@ async function initApp() {
       activeSplitTerminalId = null;
     }
 
-    // In split mode, clicking the right pane tab swaps pane focus.
     if (activeSplitTerminalId && id === activeSplitTerminalId) {
       const previousActiveId = activeTerminalId;
       activeTerminalId = id;
@@ -3831,23 +3825,38 @@ async function initApp() {
   }
 
   async function createNewTerminal(isSplitCreation = false): Promise<string | null> {
-    if (!window.electronAPI?.terminal) return null;
-    
     terminalCounter++;
-    // Fallback name logic if needed, but default shell is automatic
     const name = `term ${terminalCounter}`;
-    
-    // Create container for this terminal
+
     const container = document.createElement('div');
     if (activeSplitTerminalId || isSplitCreation) {
-       container.className = 'relative min-h-0 min-w-0 bg-[#2c2f33]';
-       container.style.position = 'relative';
+      container.className = 'relative min-h-0 min-w-0 bg-[#2c2f33]';
+      container.style.position = 'relative';
     } else {
-       container.className = 'absolute inset-0';
+      container.className = 'absolute inset-0';
     }
     ui.terminalContainer.appendChild(container);
-    
-    // Create xterm instance
+
+    const renderTerminalError = (message: string) => {
+      container.innerHTML = '';
+      container.dataset.terminalError = 'true';
+      terminalErrorContainer = container;
+      const errorWrap = document.createElement('div');
+      errorWrap.className = 'flex h-full w-full items-center justify-center text-center text-xs text-white/60';
+      errorWrap.innerHTML = `
+        <div class="max-w-md px-4">
+          <div class="text-[10px] uppercase tracking-[0.3em] text-[var(--accent-red)]">Terminal Error</div>
+          <div class="mt-2 text-white/70">${message}</div>
+        </div>
+      `;
+      container.appendChild(errorWrap);
+    };
+
+    if (!window.electronAPI?.terminal) {
+      renderTerminalError('Terminal API unavailable. Make sure the app is running in the Electron desktop runtime.');
+      return null;
+    }
+
     const terminal = new Terminal({
       theme: {
         background: '#2c2f33',
@@ -3883,19 +3892,22 @@ async function initApp() {
     terminal.loadAddon(fitAddon);
     terminal.open(container);
     
-    // Create PTY process
     const cols = Math.max(terminal.cols || 0, 80);
     const rows = Math.max(terminal.rows || 0, 24);
     const result = await window.electronAPI.terminal.create(cols, rows);
     if (!result.success) {
       const message = result.error ? `Terminal error: ${result.error}` : 'Terminal error: failed to start PTY';
-      terminal.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`);
       console.error(message);
       terminal.dispose();
-      container.remove();
+      renderTerminalError(message);
       return null;
     }
     const id = result.id;
+
+    if (terminalErrorContainer) {
+      terminalErrorContainer.remove();
+      terminalErrorContainer = null;
+    }
     
     const instance: TerminalInstance = {
       id,
@@ -3911,17 +3923,14 @@ async function initApp() {
     
     terminals.set(id, instance);
     
-    // Send input to PTY
     terminal.onData((data) => {
       window.electronAPI.terminal.write(id, data);
     });
     
-    // Handle resize
     terminal.onResize(({ cols, rows }) => {
       window.electronAPI.terminal.resize(id, cols, rows);
     });
     
-    // Fit on container resize
     const resizeObserver = new ResizeObserver(() => {
       if (!container.classList.contains('hidden')) {
         fitAddon.fit();
@@ -3942,17 +3951,13 @@ async function initApp() {
     const instance = terminals.get(id);
     if (!instance) return;
     
-    // Kill PTY
     window.electronAPI.terminal.kill(id);
     
-    // Dispose xterm
     instance.terminal.dispose();
     
-    // Remove DOM elements
     instance.container.remove();
     instance.tab.remove();
     
-    // Remove from map
     terminals.delete(id);
     
     if (activeSplitTerminalId === id) {
@@ -3984,7 +3989,6 @@ async function initApp() {
     }
   }
 
-  // Handle data from all PTY processes
   window.electronAPI?.terminal.onData((id, data) => {
     const instance = terminals.get(id);
     if (instance) {
@@ -3992,28 +3996,23 @@ async function initApp() {
     }
   });
 
-  // Handle PTY exit
   window.electronAPI?.terminal.onExit((id, exitCode) => {
     const instance = terminals.get(id);
     if (instance) {
       instance.terminal.write(`\r\n\x1b[33mProcess exited with code ${exitCode}\x1b[0m\r\n`);
-      // Remove the tab after a delay
       setTimeout(() => closeTerminal(id), 2000);
     }
   });
 
-  // Add button creates new terminal
   ui.terminalAddButton.addEventListener('click', () => {
     void createNewTerminal();
   });
 
-  // Nav terminal button focuses current terminal
   ui.navTerminalButton.addEventListener('click', () => {
     if (activeTerminalId) {
       const instance = terminals.get(activeTerminalId);
       instance?.terminal.focus();
     }
-    // Highlight button briefly
     const terminalIcon = ui.navTerminalButton.querySelector('svg');
     ui.navTerminalButton.classList.add('bg-[var(--accent-teal)]/10', 'border-[var(--accent-teal)]/40');
     ui.navTerminalButton.classList.remove('border-transparent');
@@ -4021,34 +4020,27 @@ async function initApp() {
     terminalIcon?.classList.add('text-[var(--accent-teal)]');
   });
 
-  // Make terminal container relative/grid
   ui.terminalContainer.style.position = 'relative';
 
-  // Initialize first terminal on load
   void createNewTerminal();
 
-  // Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
-    // Ctrl + Shift + ` (Backtick)
     if (e.ctrlKey && e.shiftKey && e.code === 'Backquote') {
       e.preventDefault();
       void createNewTerminal();
     }
   });
 
-  // Toggle Maximize
   let isMaximized = false;
   ui.terminalMaximizeButton.addEventListener('click', () => {
     isMaximized = !isMaximized;
     if (isMaximized) {
       ui.terminalPanel.classList.add('fixed', 'inset-0', 'z-[100]', 'bg-[#0d1117]');
       ui.terminalPanel.classList.remove('h-full', 'min-w-0', 'border-t');
-      // Keep flex layout
     } else {
       ui.terminalPanel.classList.remove('fixed', 'inset-0', 'z-[100]', 'bg-[#0d1117]');
       ui.terminalPanel.classList.add('h-full', 'min-w-0', 'border-t');
     }
-    // Refit terminals
     if (activeTerminalId) {
       setTimeout(() => terminals.get(activeTerminalId!)?.fitAddon.fit(), 50);
     }
@@ -4057,20 +4049,16 @@ async function initApp() {
     }
   });
 
-  // Split View Logic
   async function toggleSplit() {
     if (activeSplitTerminalId) {
-      // Close split
       closeTerminal(activeSplitTerminalId);
       return;
     }
     
-    // Open split
     terminals.forEach(t => t.container.classList.add('hidden')); // temp hide
     ui.terminalContainer.style.display = 'grid';
     ui.terminalContainer.style.gridTemplateColumns = '1fr 1fr';
     
-    // Left is current active
     if (activeTerminalId) {
        const t1 = terminals.get(activeTerminalId);
        if (t1) {
@@ -4080,8 +4068,7 @@ async function initApp() {
        }
     }
     
-    // Create new right terminal
-    const newId = await createNewTerminal(true); // true = automated/split creation
+    const newId = await createNewTerminal(true);
     if (newId) {
       activeSplitTerminalId = newId;
       const t2 = terminals.get(newId);
@@ -4091,7 +4078,6 @@ async function initApp() {
         // Fit happens in create
       }
     } else if (activeTerminalId) {
-      // Restore single terminal layout if split creation fails.
       activeSplitTerminalId = null;
       switchToTerminal(activeTerminalId);
     }

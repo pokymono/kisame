@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { spawn } from 'child_process';
-import { existsSync, readFileSync, createReadStream, accessSync, constants as fsConstants } from 'fs';
+import { chmodSync, existsSync, readFileSync, createReadStream, statSync } from 'fs';
 import os from 'os';
 import { stat, writeFile } from 'fs/promises';
 import { Readable } from 'stream';
@@ -391,7 +391,6 @@ ipcMain.handle(
 
       return (await res.json()) as ChatQueryResult;
     } catch (e) {
-      // Return error as a response so the UI can display it
       return {
         query,
         response: `Error: ${(e as Error).message ?? String(e)}`,
@@ -402,10 +401,121 @@ ipcMain.handle(
   }
 );
 
-// ============ PTY Terminal Support (Multi-instance) ============
 const ptyProcesses: Map<string, pty.IPty> = new Map();
 let mainWindow: BrowserWindow | null = null;
 let terminalIdCounter = 0;
+
+function resolveNodePtyRoot(): string | null {
+  try {
+    const entry = require.resolve('node-pty');
+    return path.resolve(entry, '..', '..');
+  } catch {
+    return null;
+  }
+}
+
+function resolveSpawnHelperPath(): string | null {
+  const root = resolveNodePtyRoot();
+  if (!root) return null;
+
+  const candidates = [
+    path.join(root, 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper'),
+    path.join(root, 'build', 'Release', 'spawn-helper'),
+  ];
+
+  for (const candidate of candidates) {
+    const expanded = [
+      candidate,
+      candidate.replace('app.asar', 'app.asar.unpacked'),
+      candidate.replace('node_modules.asar', 'node_modules.asar.unpacked'),
+    ];
+    for (const p of expanded) {
+      if (existsSync(p)) return p;
+    }
+  }
+
+  return null;
+}
+
+function ensurePtyHelperExecutable(): void {
+  if (process.platform === 'win32') return;
+  const helperPath = resolveSpawnHelperPath();
+  if (!helperPath) return;
+
+  try {
+    const stat = statSync(helperPath);
+    if ((stat.mode & 0o111) === 0) {
+      chmodSync(helperPath, stat.mode | 0o755);
+    }
+  } catch (error) {
+    console.warn(`[terminal] Failed to chmod spawn-helper: ${String(error)}`);
+  }
+}
+
+function getUserShell(): string | null {
+  if (process.platform === 'win32') return null;
+  try {
+    const info = os.userInfo();
+    if (info.shell && existsSync(info.shell)) return info.shell;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function buildPathEnv(): string {
+  const current = (process.env.PATH ?? '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (process.platform === 'win32') {
+    return Array.from(new Set(current)).join(path.delimiter);
+  }
+
+  const macExtras =
+    process.platform === 'darwin'
+      ? ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin']
+      : ['/usr/local/bin', '/usr/bin', '/bin', '/usr/sbin', '/sbin'];
+
+  const merged = Array.from(new Set([...macExtras, ...current]));
+  return merged.join(path.delimiter);
+}
+
+function buildTerminalEnv(defaultShell: string): { [key: string]: string } {
+  let info: os.UserInfo<string> | null = null;
+  if (process.platform !== 'win32') {
+    try {
+      info = os.userInfo();
+    } catch {
+      info = null;
+    }
+  }
+  const home = process.env.HOME || info?.homedir || os.homedir() || process.cwd();
+  const username = process.env.USER || info?.username || process.env.LOGNAME || 'user';
+
+  const env = Object.fromEntries(
+    Object.entries({
+      ...process.env,
+      SHELL: process.env.SHELL || defaultShell,
+      TERM: process.env.TERM || 'xterm-256color',
+      PATH: buildPathEnv(),
+      HOME: home,
+      USER: username,
+      LOGNAME: process.env.LOGNAME || username,
+      LANG: process.env.LANG || (process.platform === 'darwin' ? 'en_US.UTF-8' : undefined),
+    }).filter(([, value]) => typeof value === 'string')
+  ) as { [key: string]: string };
+
+  return env;
+}
+
+function getShellArgs(shellPath: string): string[] {
+  if (process.platform === 'win32') return [];
+  const shell = path.basename(shellPath);
+  if (shell === 'zsh' || shell === 'bash' || shell === 'fish') return ['-l'];
+  return [];
+}
 
 function detectShells(): { label: string; path: string }[] {
   const shells: { label: string; path: string }[] = [];
@@ -435,6 +545,11 @@ function detectShells(): { label: string; path: string }[] {
     if (existsSync(wsl)) shells.push({ label: 'WSL', path: wsl });
   } else {
     // Linux/Mac
+    const userShell = getUserShell();
+    if (userShell) {
+      shells.push({ label: 'User Shell', path: userShell });
+    }
+
     const candidates = [
       { label: 'Bash', path: '/bin/bash' },
       { label: 'Zsh', path: '/bin/zsh' },
@@ -445,6 +560,9 @@ function detectShells(): { label: string; path: string }[] {
     if (process.platform === 'darwin') {
        candidates.push({ label: 'Zsh (User)', path: '/usr/local/bin/zsh' });
        candidates.push({ label: 'Bash (User)', path: '/usr/local/bin/bash' });
+       candidates.push({ label: 'Zsh (Homebrew)', path: '/opt/homebrew/bin/zsh' });
+       candidates.push({ label: 'Bash (Homebrew)', path: '/opt/homebrew/bin/bash' });
+       candidates.push({ label: 'Fish (Homebrew)', path: '/opt/homebrew/bin/fish' });
     }
 
     for (const c of candidates) {
@@ -468,8 +586,11 @@ ipcMain.handle('terminal:listShells', () => {
 
 ipcMain.handle(
   'terminal:create',
-  (_event, cols: number, rows: number, shellPath?: string): { success: boolean; id: string; error?: string } => {
+  (event, cols: number, rows: number, shellPath?: string): { success: boolean; id: string; error?: string } => {
   const id = `term-${++terminalIdCounter}`;
+  const sender = event.sender;
+
+  ensurePtyHelperExecutable();
 
   const preferredCwd = os.homedir() || process.env.HOME || process.cwd();
   const cwdCandidates = Array.from(new Set([
@@ -480,6 +601,7 @@ ipcMain.handle(
 
   const shellCandidates = Array.from(new Set([
     shellPath && existsSync(shellPath) ? shellPath : undefined,
+    getUserShell() ?? undefined,
     ...detectShells().map((s) => s.path),
     process.env.SHELL,
     process.platform === 'win32' ? 'powershell.exe' : undefined,
@@ -489,30 +611,15 @@ ipcMain.handle(
     '/bin/sh',
   ].filter(Boolean))) as string[];
   const defaultShell = shellCandidates[0] ?? (process.platform === 'win32' ? 'powershell.exe' : '/bin/sh');
-  const env = Object.fromEntries(
-    Object.entries({
-      ...process.env,
-      SHELL: process.env.SHELL || defaultShell,
-      TERM: process.env.TERM || 'xterm-256color',
-      PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
-    }).filter(([, value]) => typeof value === 'string')
-  ) as { [key: string]: string };
+  const env = buildTerminalEnv(defaultShell);
 
   let ptyProcess: pty.IPty | null = null;
   let lastError: unknown = null;
 
   for (const shell of shellCandidates) {
-    try {
-      if (process.platform !== 'win32') {
-        accessSync(shell, fsConstants.X_OK);
-      }
-    } catch {
-      continue;
-    }
-
     for (const cwd of cwdCandidates) {
       try {
-        ptyProcess = pty.spawn(shell, [], {
+        ptyProcess = pty.spawn(shell, getShellArgs(shell), {
           name: 'xterm-256color',
           cols: Math.max(1, cols || 0) || 80,
           rows: Math.max(1, rows || 0) || 24,
@@ -541,14 +648,14 @@ ipcMain.handle(
   ptyProcesses.set(id, ptyProcess);
 
   ptyProcess.onData((data) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal:data', { id, data });
+    if (!sender.isDestroyed()) {
+      sender.send('terminal:data', { id, data });
     }
   });
 
   ptyProcess.onExit(({ exitCode }) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('terminal:exit', { id, exitCode });
+    if (!sender.isDestroyed()) {
+      sender.send('terminal:exit', { id, exitCode });
     }
     ptyProcesses.delete(id);
   });
