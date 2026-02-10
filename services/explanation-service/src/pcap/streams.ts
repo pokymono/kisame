@@ -198,6 +198,30 @@ async function runTshark(
   return stdout;
 }
 
+let cachedPrefFlags: string[] | null = null;
+let prefFlagsChecked = false;
+
+async function getTcpPrefFlags(tsharkPath: string): Promise<string[]> {
+  if (prefFlagsChecked) return cachedPrefFlags ?? [];
+  prefFlagsChecked = true;
+  try {
+    const stdout = await runTshark([tsharkPath, '-G', 'preferences'], {
+      timeoutMs: 5000,
+      label: 'tshark.prefs',
+    });
+    const hasStream = stdout.includes('tcp.desegment_tcp_streams');
+    const hasData = stdout.includes('tcp.desegment_tcp_data');
+    const flags: string[] = [];
+    if (hasStream) flags.push('-o', 'tcp.desegment_tcp_streams:TRUE');
+    if (hasData) flags.push('-o', 'tcp.desegment_tcp_data:TRUE');
+    cachedPrefFlags = flags;
+    return flags;
+  } catch {
+    cachedPrefFlags = [];
+    return [];
+  }
+}
+
 function parseFollowAsciiOutput(output: string): { endpoints?: { a: Endpoint; b: Endpoint }; text: string } {
   const lines = output.split('\n');
   let nodeA: Endpoint | null = null;
@@ -409,12 +433,7 @@ export async function followTcpStream(
     throw new Error('tshark was not found. Install Wireshark or set TSHARK_PATH to the tshark binary.');
   }
 
-  const prefs: string[] = [
-    '-o',
-    'tcp.desegment_tcp_streams:TRUE',
-    '-o',
-    'tcp.desegment_tcp_data:TRUE',
-  ];
+  const prefFlags = await getTcpPrefFlags(tsharkPath);
   const baseArgs: string[] = [
     tsharkPath,
     '-r',
@@ -453,24 +472,11 @@ export async function followTcpStream(
     '-e',
     'tcp.payload',
   ];
-  const argsWithPrefs = [tsharkPath, ...prefs, ...baseArgs.slice(1)];
-  const argsWithoutPrefs = baseArgs;
+  const args = prefFlags.length ? [tsharkPath, ...prefFlags, ...baseArgs.slice(1)] : baseArgs;
 
   logInfo('tshark.stream.follow.start', { session_id: session.id, stream_id: streamId });
-  let stdout = '';
-  let prefsApplied = true;
-  try {
-    stdout = await runTshark(argsWithPrefs, { timeoutMs: 20000, label: 'stream.follow' });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/unknown preference/i.test(message)) {
-      prefsApplied = false;
-      stdout = await runTshark(argsWithoutPrefs, { timeoutMs: 20000, label: 'stream.follow' });
-    } else {
-      throw error;
-    }
-  }
-  const prefsNote = prefsApplied
+  const stdout = await runTshark(args, { timeoutMs: 20000, label: 'stream.follow' });
+  const prefsNote = prefFlags.length
     ? []
     : ['TCP desegmentation prefs unsupported; ran without -o preferences.'];
   const lines = stdout.split('\n').filter((l) => l.length);
