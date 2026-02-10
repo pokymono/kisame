@@ -64,10 +64,32 @@ async function initApp() {
     setTabButtonState(ui.navExportButton, tab === 'export');
 
     const showAnalysis = tab === 'analyze';
-    ui.analysisMain.classList.toggle('hidden', !showAnalysis);
-    ui.chatColumn.classList.toggle('hidden', !showAnalysis);
-    ui.capturePanel.classList.toggle('hidden', tab !== 'capture');
-    ui.exportPanel.classList.toggle('hidden', tab !== 'export');
+    
+    const panels = [
+      { el: ui.analysisMain, show: showAnalysis },
+      { el: ui.chatColumn, show: showAnalysis },
+      { el: ui.capturePanel, show: tab === 'capture' },
+      { el: ui.exportPanel, show: tab === 'export' },
+    ];
+    
+    for (const panel of panels) {
+      if (!panel.show) {
+        panel.el.classList.add('hidden');
+      }
+    }
+    
+    requestAnimationFrame(() => {
+      for (const panel of panels) {
+        if (panel.show) {
+          panel.el.classList.remove('hidden');
+          panel.el.classList.add('animate-fade-in');
+          setTimeout(() => {
+            panel.el.classList.remove('animate-fade-in');
+          }, 200);
+        }
+      }
+    });
+    
     if (tab === 'export') {
       updateExportSummary();
     }
@@ -124,7 +146,22 @@ async function initApp() {
     setAnalyzeScreenButtonState(ui.analyzeScreenInsightsButton, screen === 'insights');
     setAnalyzeScreenButtonState(ui.analyzeScreenWorkflowsButton, screen === 'workflows');
     ui.analyzeScreenLabel.textContent = screen.toUpperCase();
-    mountAnalyzeScreen(screen);
+    
+    // Add smooth transition effect
+    ui.analyzeScreenHost.classList.add('screen-transition', 'transitioning');
+    
+    requestAnimationFrame(() => {
+      mountAnalyzeScreen(screen);
+      // Allow the DOM to settle before removing transition class
+      requestAnimationFrame(() => {
+        ui.analyzeScreenHost.classList.remove('transitioning');
+        // Clean up after transition completes
+        setTimeout(() => {
+          ui.analyzeScreenHost.classList.remove('screen-transition');
+        }, 200);
+      });
+    });
+    
     updateTimelineUI();
     if (analysis) {
       renderInsights();
@@ -141,7 +178,6 @@ async function initApp() {
       const backendUrl = await window.electronAPI.getBackendUrl();
       if (backendUrl) explanationBaseUrl = backendUrl;
     } catch {
-      // Keep default.
     }
   }
   const explanationCache = new Map<string, string>();
@@ -167,7 +203,6 @@ async function initApp() {
     });
   });
 
-  // Chat history buffer
   const chatHistory: string[] = [];
   let chatHistoryIndex = -1;
   let chatCurrentDraft = '';
@@ -1607,7 +1642,12 @@ async function initApp() {
 
     isWorkflowRunning = true;
     setWorkflowControlsDisabled(true);
-    ui.workflowRunButton.textContent = 'RUNNING…';
+    ui.workflowRunButton.classList.add('btn-loading');
+    
+    const workflowRow = ui.workflowList.querySelector(`[data-workflow-id="${workflow.id}"]`);
+    if (workflowRow) {
+      workflowRow.classList.add('pulse-attention');
+    }
 
     try {
       for (let i = 0; i < workflow.prompts.length; i++) {
@@ -1618,7 +1658,11 @@ async function initApp() {
     } finally {
       isWorkflowRunning = false;
       setWorkflowControlsDisabled(false);
+      ui.workflowRunButton.classList.remove('btn-loading');
       ui.workflowRunButton.textContent = 'RUN';
+      if (workflowRow) {
+        workflowRow.classList.remove('pulse-attention');
+      }
     }
   }
 
@@ -2023,7 +2067,7 @@ async function initApp() {
   function setAnalysisDetail(text: string) {
     ui.analysisDetail.replaceChildren(
       el('pre', {
-        className: 'whitespace-pre-wrap text-xs text-white/60 leading-relaxed',
+        className: 'whitespace-pre-wrap text-xs text-white/60 leading-relaxed animate-fade-in',
         text,
       })
     );
@@ -2035,6 +2079,16 @@ async function initApp() {
       setAnalysisDetail(explanationCache.get(sessionId)!);
       return;
     }
+
+    ui.analysisDetail.replaceChildren(
+      el('div', {
+        className: 'flex items-center gap-2 text-xs text-white/40 animate-fade-in',
+        children: [
+          el('div', { className: 'loading-spinner loading-spinner-sm' }),
+          el('span', { text: 'Fetching explanation…' }),
+        ],
+      })
+    );
 
     const requestId = ++explanationRequestSeq;
     try {
@@ -2070,14 +2124,21 @@ async function initApp() {
     captureSessionId = null;
     updateExplorerSelection();
     setWelcomeVisible(true);
+    
+    // Add entrance animation to welcome panel
+    ui.welcomePanel.classList.add('animate-fade-in-up');
+    setTimeout(() => {
+      ui.welcomePanel.classList.remove('animate-fade-in-up');
+    }, 300);
   }
 
   async function startLiveCapture() {
     if (liveCaptureId) return;
     ui.liveCaptureButton.disabled = true;
     ui.openPcapButton.disabled = true;
-    ui.liveCaptureButton.textContent = 'Starting…';
+    ui.liveCaptureButton.classList.add('btn-loading');
     ui.liveCaptureStatus.textContent = 'STARTING…';
+    ui.liveCaptureStatus.classList.add('status-shimmer');
 
     try {
       const preferredInterface =
@@ -2101,13 +2162,19 @@ async function initApp() {
       liveCaptureId = data.capture_id;
       liveCaptureInterface = data.interface?.name ?? data.interface?.id ?? 'interface';
       ui.captureBadge.textContent = `Live: ${liveCaptureInterface}`;
+      ui.captureBadge.classList.add('animate-fade-in');
       ui.liveCaptureButton.textContent = 'Stop Capture';
+      ui.liveCaptureButton.classList.remove('btn-loading');
       ui.liveCaptureStatus.textContent = `CAPTURING ON ${liveCaptureInterface.toUpperCase()}`;
+      ui.liveCaptureStatus.classList.remove('status-shimmer');
+      ui.liveCaptureStatus.classList.add('pulse-attention');
     } catch (err) {
       ui.liveCaptureButton.textContent = 'Live Capture';
+      ui.liveCaptureButton.classList.remove('btn-loading');
       ui.openPcapButton.disabled = false;
       ui.liveCaptureButton.disabled = false;
       ui.liveCaptureStatus.textContent = 'READY';
+      ui.liveCaptureStatus.classList.remove('status-shimmer');
       alert((err as Error).message ?? String(err));
       return;
     }
@@ -2120,8 +2187,10 @@ async function initApp() {
     const captureId = liveCaptureId;
     let stoppedOk = false;
     ui.liveCaptureButton.disabled = true;
-    ui.liveCaptureButton.textContent = 'Stopping…';
+    ui.liveCaptureButton.classList.add('btn-loading');
     ui.liveCaptureStatus.textContent = 'STOPPING…';
+    ui.liveCaptureStatus.classList.remove('pulse-attention');
+    ui.liveCaptureStatus.classList.add('status-shimmer');
 
     try {
       const stopRes = await fetch(`${explanationBaseUrl}/capture/stop`, {
@@ -2138,6 +2207,8 @@ async function initApp() {
         file_name: string;
       };
 
+      ui.liveCaptureStatus.textContent = 'ANALYZING…';
+      
       const analyzeRes = await fetch(`${explanationBaseUrl}/tools/analyzePcap`, {
         method: 'POST',
         headers: withClientHeaders({ 'content-type': 'application/json' }),
@@ -2162,17 +2233,20 @@ async function initApp() {
         ? `Live: ${liveCaptureInterface}`
         : 'Live capture';
       ui.liveCaptureStatus.textContent = 'READY';
+      ui.liveCaptureStatus.classList.remove('status-shimmer');
       alert((err as Error).message ?? String(err));
       liveCaptureId = null;
       liveCaptureInterface = null;
     } finally {
       ui.liveCaptureButton.textContent = 'Live Capture';
+      ui.liveCaptureButton.classList.remove('btn-loading');
       ui.liveCaptureButton.disabled = false;
       ui.openPcapButton.disabled = false;
       if (stoppedOk) {
         liveCaptureId = null;
         liveCaptureInterface = null;
         ui.liveCaptureStatus.textContent = 'READY';
+        ui.liveCaptureStatus.classList.remove('status-shimmer');
       }
     }
   }
@@ -2180,67 +2254,89 @@ async function initApp() {
   function renderSessions(sessions: AnalysisArtifact['sessions']) {
     sessionElements.clear();
     ui.sessionsCount.textContent = String(sessions.length);
-    ui.sessionsList.replaceChildren(
-      ...sessions.map((session, index) => {
-        const item = el('button', {
-          className: 'w-full rounded px-3 py-3 text-left transition-all data-card',
-          attrs: { 'data-session-id': session.id, type: 'button', style: `animation-delay: ${index * 0.05}s` },
-        });
-        item.classList.add('animate-slide-in');
-
-        // Protocol badge
-        const header = el('div', { className: 'flex items-center justify-between' });
-        const transport = el('div', {
-          className:
-            'px-2 py-0.5 rounded text-[9px] font-[var(--font-mono)] font-semibold tracking-[0.15em] uppercase border ' +
-            (session.transport === 'tcp'
-              ? 'badge-tcp'
-              : session.transport === 'udp'
-                ? 'badge-udp'
-                : 'text-white/40 border-white/20 bg-white/5'),
-          text: session.transport.toUpperCase(),
-        });
-        const time = el('div', {
-          className: 'text-[10px] font-[var(--font-mono)] text-white/40',
-          text: formatTimestamp(session.first_ts).slice(11, 19),
-        });
-        header.append(transport, time);
-
-        // Endpoints with cyber styling
-        const a = `${session.endpoints.a.ip}${session.endpoints.a.port ? `:${session.endpoints.a.port}` : ''}`;
-        const b = `${session.endpoints.b.ip}${session.endpoints.b.port ? `:${session.endpoints.b.port}` : ''}`;
-        const endpoints = el('div', {
-          className: 'mt-2.5 flex items-center gap-2 text-[11px] font-[var(--font-mono)] text-white/80 overflow-hidden',
-        });
-        const endpointA = el('span', { text: a, className: 'truncate min-w-0' });
-        const arrow = el('span', { className: 'text-[var(--accent-cyan)]/50 flex-shrink-0', text: '⟷' });
-        const endpointB = el('span', { text: b, className: 'truncate min-w-0' });
-        endpoints.append(endpointA, arrow, endpointB);
-
-        // Stats row
-        const meta = el('div', { className: 'mt-2 flex flex-wrap gap-3 text-[10px] font-[var(--font-mono)]' });
-        meta.append(
-          el('span', { className: 'text-white/40', text: `${session.packet_count} PKT` }),
-          el('span', { className: 'text-white/40', text: formatBytes(session.byte_count) })
-        );
-        if (session.rule_flags && session.rule_flags.length) {
-          const flagBadge = el('span', {
-            className: 'px-1.5 py-0.5 rounded badge-alert text-[9px] font-semibold',
-            text: session.rule_flags.slice(0, 2).join(', '),
+    
+    if (sessions.length > 10) {
+      const skeletons = Array.from({ length: 5 }, (_, i) =>
+        el('div', {
+          className: 'skeleton skeleton-card animate-fade-in',
+          attrs: { style: `animation-delay: ${i * 0.05}s` },
+        })
+      );
+      ui.sessionsList.replaceChildren(...skeletons);
+    }
+    
+    requestAnimationFrame(() => {
+      ui.sessionsList.replaceChildren(
+        ...sessions.map((session, index) => {
+          const item = el('button', {
+            className: 'w-full rounded px-3 py-3 text-left transition-all data-card hover-lift',
+            attrs: { 
+              'data-session-id': session.id, 
+              type: 'button', 
+              style: `animation-delay: ${Math.min(index * 0.03, 0.5)}s; opacity: 0;` 
+            },
           });
-          meta.append(flagBadge);
-        }
+          item.classList.add('animate-slide-in');
 
-        item.append(header, endpoints, meta);
-        sessionElements.set(session.id, item);
-        return item;
-      })
-    );
+          const header = el('div', { className: 'flex items-center justify-between' });
+          const transport = el('div', {
+            className:
+              'px-2 py-0.5 rounded text-[9px] font-[var(--font-mono)] font-semibold tracking-[0.15em] uppercase border smooth-colors ' +
+              (session.transport === 'tcp'
+                ? 'badge-tcp'
+                : session.transport === 'udp'
+                  ? 'badge-udp'
+                  : 'text-white/40 border-white/20 bg-white/5'),
+            text: session.transport.toUpperCase(),
+          });
+          const time = el('div', {
+            className: 'text-[10px] font-[var(--font-mono)] text-white/40',
+            text: formatTimestamp(session.first_ts).slice(11, 19),
+          });
+          header.append(transport, time);
+
+          const a = `${session.endpoints.a.ip}${session.endpoints.a.port ? `:${session.endpoints.a.port}` : ''}`;
+          const b = `${session.endpoints.b.ip}${session.endpoints.b.port ? `:${session.endpoints.b.port}` : ''}`;
+          const endpoints = el('div', {
+            className: 'mt-2.5 flex items-center gap-2 text-[11px] font-[var(--font-mono)] text-white/80 overflow-hidden',
+          });
+          const endpointA = el('span', { text: a, className: 'truncate min-w-0' });
+          const arrow = el('span', { className: 'text-[var(--accent-cyan)]/50 flex-shrink-0 transition-colors', text: '⟷' });
+          const endpointB = el('span', { text: b, className: 'truncate min-w-0' });
+          endpoints.append(endpointA, arrow, endpointB);
+
+          const meta = el('div', { className: 'mt-2 flex flex-wrap gap-3 text-[10px] font-[var(--font-mono)]' });
+          meta.append(
+            el('span', { className: 'text-white/40 smooth-colors', text: `${session.packet_count} PKT` }),
+            el('span', { className: 'text-white/40 smooth-colors', text: formatBytes(session.byte_count) })
+          );
+          if (session.rule_flags && session.rule_flags.length) {
+            const flagBadge = el('span', {
+              className: 'px-1.5 py-0.5 rounded badge-alert text-[9px] font-semibold',
+              text: session.rule_flags.slice(0, 2).join(', '),
+            });
+            meta.append(flagBadge);
+          }
+
+          item.append(header, endpoints, meta);
+          sessionElements.set(session.id, item);
+          return item;
+        })
+      );
+    });
   }
 
   function updateSessionSelection() {
     for (const [id, element] of sessionElements) {
-      element.classList.toggle('selected', id === selectedSessionId);
+      const isSelected = id === selectedSessionId;
+      const wasSelected = element.classList.contains('selected');
+      
+      if (isSelected !== wasSelected) {
+        element.classList.toggle('selected', isSelected);
+        if (isSelected) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
     }
   }
 
@@ -2250,15 +2346,15 @@ async function initApp() {
   ) {
     const showSessionId = options?.showSessionId ?? false;
     if (!timeline.length) {
-      ui.timelineList.replaceChildren(
-        el('div', {
-          className: 'flex flex-col items-center justify-center py-8 text-center',
-          children: [
-            el('div', { className: 'data-label mb-1', text: 'NO EVENTS' }),
-            el('div', { className: 'text-[10px] text-white/30', text: 'No decoded events for this session' }),
-          ],
-        })
-      );
+      const emptyEl = el('div', {
+        className: 'flex flex-col items-center justify-center py-8 text-center empty-state',
+        children: [
+          el('div', { className: 'data-label mb-1', text: 'NO EVENTS' }),
+          el('div', { className: 'text-[10px] text-white/30', text: 'No decoded events for this session' }),
+        ],
+      });
+      ui.timelineList.replaceChildren(emptyEl);
+      requestAnimationFrame(() => emptyEl.classList.add('visible'));
       return;
     }
 
@@ -2266,61 +2362,73 @@ async function initApp() {
       a.ts !== b.ts ? a.ts - b.ts : a.evidence_frame - b.evidence_frame
     );
 
-    ui.timelineList.replaceChildren(
-      ...sorted.slice(0, 200).map((event, index) => {
-        const row = el('button', {
-          className:
-            'group relative w-full text-left pl-4 pb-3 border-l border-[var(--app-line)] ' +
-            'hover:border-[var(--accent-cyan)]/30 transition-colors animate-slide-in',
-          attrs: {
-            type: 'button',
-            style: `animation-delay: ${index * 0.03}s`,
-            'data-timeline-session-id': event.session_id,
-          },
-        });
+    if (sorted.length > 50) {
+      const skeletons = Array.from({ length: 8 }, (_, i) =>
+        el('div', {
+          className: 'skeleton h-16 rounded animate-fade-in',
+          attrs: { style: `animation-delay: ${i * 0.03}s` },
+        })
+      );
+      ui.timelineList.replaceChildren(...skeletons);
+    }
 
-        const metaRow = el('div', { className: 'mt-1 flex items-center gap-2 flex-wrap' });
-        const kindBadge = el('span', {
-          className: 'px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/45 uppercase tracking-wider',
-          text: event.kind,
-        });
-        metaRow.append(kindBadge);
-        if (showSessionId) {
+    requestAnimationFrame(() => {
+      ui.timelineList.replaceChildren(
+        ...sorted.slice(0, 200).map((event, index) => {
+          const row = el('button', {
+            className:
+              'group relative w-full text-left pl-4 pb-3 border-l border-[var(--app-line)] ' +
+              'hover:border-[var(--accent-cyan)]/30 transition-all animate-slide-in',
+            attrs: {
+              type: 'button',
+              style: `animation-delay: ${Math.min(index * 0.02, 0.4)}s; opacity: 0;`,
+              'data-timeline-session-id': event.session_id,
+            },
+          });
+
+          const metaRow = el('div', { className: 'mt-1 flex items-center gap-2 flex-wrap' });
+          const kindBadge = el('span', {
+            className: 'px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/45 uppercase tracking-wider smooth-colors',
+            text: event.kind,
+          });
+          metaRow.append(kindBadge);
+          if (showSessionId) {
+            metaRow.append(
+              el('span', {
+                className: 'px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/35 truncate max-w-[140px]',
+                text: event.session_id,
+              })
+            );
+          }
           metaRow.append(
             el('span', {
-              className: 'px-1.5 py-0.5 rounded border border-white/10 bg-white/5 text-[9px] font-[var(--font-mono)] text-white/35 truncate max-w-[140px]',
-              text: event.session_id,
+              className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-white/30',
+              text: `FRAME #${event.evidence_frame}`,
             })
           );
-        }
-        metaRow.append(
-          el('span', {
-            className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-white/30',
-            text: `FRAME #${event.evidence_frame}`,
-          })
-        );
 
-        // Timeline dot
-        const dot = el('div', {
-          className: 'absolute left-0 top-0 -translate-x-1/2 size-2 rounded-full bg-[var(--app-surface)] border-2 border-[var(--accent-cyan)]/50 group-hover:border-[var(--accent-cyan)] group-hover:bg-[var(--accent-cyan)]/20 transition-colors',
-        });
-        
-        // Timestamp
-        const timestamp = el('div', {
-          className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-[var(--accent-cyan)]/60 mb-1',
-          text: formatTimestamp(event.ts),
-        });
-        
-        // Event summary
-        const summary = el('div', { 
-          className: 'text-sm text-white/80 leading-relaxed group-hover:text-white/95 transition-colors break-words overflow-hidden', 
-          text: event.summary 
-        });
+          // Timeline dot
+          const dot = el('div', {
+            className: 'absolute left-0 top-0 -translate-x-1/2 size-2 rounded-full bg-[var(--app-surface)] border-2 border-[var(--accent-cyan)]/50 group-hover:border-[var(--accent-cyan)] group-hover:bg-[var(--accent-cyan)]/20 transition-colors',
+          });
+          
+          // Timestamp
+          const timestamp = el('div', {
+            className: 'text-[9px] font-[var(--font-mono)] tracking-wider text-[var(--accent-cyan)]/60 mb-1',
+            text: formatTimestamp(event.ts),
+          });
+          
+          // Event summary
+          const summary = el('div', { 
+            className: 'text-sm text-white/80 leading-relaxed group-hover:text-white/95 transition-colors break-words overflow-hidden', 
+            text: event.summary 
+          });
 
-        row.append(dot, timestamp, summary, metaRow);
-        return row as unknown as HTMLElement;
-      })
-    );
+          row.append(dot, timestamp, summary, metaRow);
+          return row;
+        })
+      );
+    });
   }
 
   function updateTimelineControlsForScope() {
@@ -2820,11 +2928,21 @@ async function initApp() {
       }
       try {
         captureRow.classList.add('opacity-60');
+        // Add loading indicator to the row
+        const loadingIndicator = el('div', {
+          className: 'absolute inset-0 flex items-center justify-center bg-[var(--app-bg)]/80 rounded animate-fade-in',
+          children: [el('div', { className: 'loading-spinner loading-spinner-sm' })],
+        });
+        captureRow.style.position = 'relative';
+        captureRow.appendChild(loadingIndicator);
+        
         await analyzeExplorerCapture(id);
       } catch (err) {
         alert((err as Error).message ?? String(err));
       } finally {
         captureRow.classList.remove('opacity-60');
+        const loader = captureRow.querySelector('.loading-spinner')?.parentElement;
+        if (loader) loader.remove();
       }
       return;
     }
@@ -2875,11 +2993,17 @@ async function initApp() {
   ui.openPcapButton.addEventListener('click', async () => {
     if (!window.electronAPI?.openPcapAndAnalyze) return;
     ui.openPcapButton.disabled = true;
-    ui.openPcapButton.textContent = '◈ ANALYZING…';
-    ui.openPcapButton.classList.add('opacity-60');
+    ui.openPcapButton.classList.add('btn-loading');
+    
+    const originalBadge = ui.captureBadge.textContent;
+    ui.captureBadge.innerHTML = '<div class="flex items-center gap-2"><div class="loading-spinner loading-spinner-sm"></div><span class="status-shimmer">ANALYZING…</span></div>';
+    
     try {
       const result = await window.electronAPI.openPcapAndAnalyze(clientId);
-      if (result.canceled) return;
+      if (result.canceled) {
+        ui.captureBadge.textContent = originalBadge ?? 'NO CAPTURE';
+        return;
+      }
       analysis = result.analysis as AnalysisArtifact;
       captureSessionId = analysis.pcap?.session_id ?? null;
       if (captureSessionId) {
@@ -2899,11 +3023,11 @@ async function initApp() {
       void refreshExplorerCaptures();
     } catch (err) {
       console.error(err);
+      ui.captureBadge.textContent = originalBadge ?? 'NO CAPTURE';
       alert((err as Error).message ?? String(err));
     } finally {
       ui.openPcapButton.disabled = false;
-      ui.openPcapButton.textContent = '◈ OPEN PCAP';
-      ui.openPcapButton.classList.remove('opacity-60');
+      ui.openPcapButton.classList.remove('btn-loading');
     }
   });
 

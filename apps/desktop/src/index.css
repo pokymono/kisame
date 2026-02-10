@@ -169,16 +169,26 @@
     background: var(--app-surface);
     border: 1px solid var(--app-line-strong);
     border-radius: 6px;
-    transition: all 0.15s ease;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     font-weight: 500;
+    cursor: pointer;
   }
-  .cyber-btn:hover {
+  .cyber-btn:hover:not(:disabled) {
     background: var(--app-bg-deep);
     border-color: var(--accent-primary);
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    transform: translateY(-1px);
   }
-  .cyber-btn:active {
-    transform: scale(0.98);
+  .cyber-btn:active:not(:disabled) {
+    transform: scale(0.98) translateY(0);
+  }
+  .cyber-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .cyber-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(110, 181, 181, 0.2);
   }
 
   /* Data card - clean with subtle shadow */
@@ -187,17 +197,26 @@
     border: 1px solid var(--app-line);
     border-radius: 8px;
     position: relative;
-    transition: all 0.2s ease;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
   }
   .data-card:hover {
     border-color: var(--app-line-strong);
     background: linear-gradient(180deg, rgba(28, 32, 38, 0.65), rgba(22, 26, 32, 0.5));
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+  }
+  .data-card:active {
+    transform: scale(0.99);
+    transition-duration: 0.1s;
   }
   .data-card.selected {
     border-color: var(--accent-primary);
     background: linear-gradient(180deg, rgba(28, 36, 40, 0.7), rgba(20, 28, 32, 0.55));
     box-shadow: 0 0 0 3px rgba(110, 181, 181, 0.12);
+  }
+  .data-card.selected:hover {
+    transform: none;
   }
 
   .workflow-card {
@@ -579,7 +598,7 @@
 @keyframes slideIn {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-8px);
   }
   to {
     opacity: 1;
@@ -587,8 +606,41 @@
   }
 }
 
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .animate-slide-in {
-  animation: slideIn 0.3s ease-out forwards;
+  animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-fill-mode: both;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-fill-mode: both;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-fill-mode: both;
 }
 
 /* Stagger animation delays */
@@ -597,6 +649,380 @@
 .stagger-3 { animation-delay: 0.15s; }
 .stagger-4 { animation-delay: 0.2s; }
 .stagger-5 { animation-delay: 0.25s; }
+
+/* ==========================================================================
+   SMOOTH TRANSITIONS & LOADING STATES
+   ========================================================================== */
+
+/* Fade in animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+/* Fade in up animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.25s ease-out forwards;
+}
+
+/* Scale in animation */
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.2s ease-out forwards;
+}
+
+/* Content reveal animation */
+@keyframes contentReveal {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-content-reveal {
+  animation: contentReveal 0.3s ease-out forwards;
+}
+
+/* Skeleton loading animation */
+@keyframes skeletonPulse {
+  0%, 100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, 
+    var(--app-surface) 0%,
+    var(--app-surface-elevated) 50%,
+    var(--app-surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeletonPulse 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+.skeleton-text {
+  height: 12px;
+  border-radius: 3px;
+}
+
+.skeleton-text-sm {
+  height: 10px;
+  border-radius: 2px;
+}
+
+.skeleton-badge {
+  height: 18px;
+  width: 48px;
+  border-radius: 4px;
+}
+
+.skeleton-card {
+  min-height: 80px;
+  border-radius: 8px;
+}
+
+/* Loading spinner */
+@keyframes spinnerRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--app-line);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spinnerRotate 0.8s linear infinite;
+}
+
+.loading-spinner-sm {
+  width: 14px;
+  height: 14px;
+  border-width: 1.5px;
+}
+
+.loading-spinner-lg {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+
+/* Loading overlay */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(44, 47, 51, 0.8);
+  backdrop-filter: blur(2px);
+  z-index: 10;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.loading-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Loading state for buttons */
+.btn-loading {
+  position: relative;
+  pointer-events: none;
+  color: transparent !important;
+}
+
+.btn-loading::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  top: 50%;
+  left: 50%;
+  margin-left: -7px;
+  margin-top: -7px;
+  border: 2px solid var(--app-line);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spinnerRotate 0.8s linear infinite;
+}
+
+/* Panel transitions */
+.panel-transition {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.panel-hidden {
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+}
+
+.panel-visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* Tab transition */
+.tab-content {
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.tab-content.active {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* List item transitions */
+.list-item-enter {
+  opacity: 0;
+  transform: translateX(-8px);
+}
+
+.list-item-enter-active {
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* Progress bar */
+@keyframes progressIndeterminate {
+  0% {
+    left: -35%;
+    right: 100%;
+  }
+  60% {
+    left: 100%;
+    right: -90%;
+  }
+  100% {
+    left: 100%;
+    right: -90%;
+  }
+}
+
+.progress-bar {
+  height: 2px;
+  background: var(--app-line);
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-bar-indeterminate::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--accent-primary);
+  animation: progressIndeterminate 2s ease-in-out infinite;
+}
+
+/* Empty state transitions */
+.empty-state {
+  opacity: 0;
+  transform: scale(0.95);
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.empty-state.visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Hover lift effect */
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Active press effect */
+.active-press:active {
+  transform: scale(0.98);
+}
+
+/* Smooth border transitions for focus states */
+.focus-ring {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.focus-ring:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(110, 181, 181, 0.15);
+}
+
+/* Smooth color transitions */
+.smooth-colors {
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+/* Screen transition wrapper */
+.screen-transition {
+  opacity: 1;
+  transition: opacity 0.15s ease;
+}
+
+.screen-transition.transitioning {
+  opacity: 0;
+}
+
+/* Notification/toast animation */
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.toast-enter {
+  animation: toastSlideIn 0.25s ease-out forwards;
+}
+
+/* Ripple effect */
+.ripple {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple::after {
+  content: '';
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+  background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
+  transform: scale(0);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.4s ease, opacity 0.4s ease;
+}
+
+.ripple:active::after {
+  transform: scale(2);
+  opacity: 1;
+  transition: transform 0s, opacity 0s;
+}
+
+/* Collapse/expand animation */
+.collapsible {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.2s ease;
+}
+
+.collapsible.collapsed {
+  max-height: 0;
+  opacity: 0;
+}
+
+.collapsible.expanded {
+  opacity: 1;
+}
+
+/* Pulse glow for attention */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(110, 181, 181, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(110, 181, 181, 0);
+  }
+}
+
+.pulse-attention {
+  animation: pulseGlow 2s ease-in-out infinite;
+}
 
 /* ==========================================================================
    TEXT OVERFLOW & RESPONSIVE UTILITIES

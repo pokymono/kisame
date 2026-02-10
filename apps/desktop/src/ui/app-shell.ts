@@ -165,10 +165,10 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   const navItems = el('div', { className: 'flex items-center gap-1' });
   const tabButtonBase =
-    'px-3 py-1 text-[10px] font-[var(--font-display)] tracking-[0.2em] transition-all rounded';
+    'px-3 py-1 text-[10px] font-[var(--font-display)] tracking-[0.2em] transition-all duration-200 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-cyan)]/30 active:scale-95';
   const tabActiveClass =
     `${tabButtonBase} text-[var(--accent-cyan)] bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/30`;
-  const tabInactiveClass = `${tabButtonBase} text-white/50 hover:text-white/80`;
+  const tabInactiveClass = `${tabButtonBase} text-white/50 hover:text-white/80 border border-transparent hover:border-white/10`;
 
   const navCaptureButton = el('button', {
     className: tabInactiveClass,
@@ -205,7 +205,7 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   statusDot.append(dot, statusText);
 
   const captureBadge = el('div', {
-    className: 'flex items-center gap-2 px-3 py-1 text-[10px] font-[var(--font-mono)] tracking-[0.15em] text-white/50 border border-[var(--app-line)] rounded bg-[var(--app-surface)] max-w-[180px] overflow-hidden',
+    className: 'flex items-center gap-2 px-3 py-1 text-[10px] font-[var(--font-mono)] tracking-[0.15em] text-white/50 border border-[var(--app-line)] rounded bg-[var(--app-surface)] max-w-[180px] overflow-hidden transition-all duration-200',
   });
   const badgeIcon = iconHex();
   badgeIcon.classList.add('size-3', 'text-white/30', 'flex-shrink-0');
@@ -218,12 +218,12 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   });
 
   const openPcapButton = el('button', {
-    className: 'cyber-btn px-4 py-1.5 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.2em] text-[var(--accent-cyan)] uppercase',
+    className: 'cyber-btn px-4 py-1.5 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.2em] text-[var(--accent-cyan)] uppercase active-press ripple',
     text: '◈ OPEN PCAP',
   }) as HTMLButtonElement;
 
   const liveCaptureButton = el('button', {
-    className: 'cyber-btn px-4 py-1.5 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.2em] text-[var(--accent-teal)] uppercase',
+    className: 'cyber-btn px-4 py-1.5 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.2em] text-[var(--accent-teal)] uppercase active-press ripple',
     text: '◈ LIVE CAPTURE',
   }) as HTMLButtonElement;
 
@@ -1130,20 +1130,20 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   chatBody.append(chatEmptyState, chatMessages);
 
   const chatInputRow = el('div', {
-    className: 'px-3 py-3 border-t border-[var(--app-line)] bg-[var(--app-surface)]/30',
+    className: 'px-3 py-3 border-t border-[var(--app-line)] bg-[var(--app-surface)]/30 transition-colors duration-200',
   });
 
   const chatInputWrap = el('div', {
-    className: 'relative flex items-center gap-2 rounded-lg bg-[var(--app-bg)] border border-[var(--app-line)] focus-within:border-[var(--accent-cyan)]/50 focus-within:shadow-[0_0_20px_rgba(0,240,255,0.1)] transition-all',
+    className: 'relative flex items-center gap-2 rounded-lg bg-[var(--app-bg)] border border-[var(--app-line)] focus-within:border-[var(--accent-cyan)]/50 focus-within:shadow-[0_0_20px_rgba(0,240,255,0.1)] transition-all duration-200',
   });
 
   const inputIcon = el('div', {
-    className: 'pl-3 text-white/20',
+    className: 'pl-3 text-white/20 transition-colors duration-200',
     text: '›',
   });
 
   const chatInput = el('input', {
-    className: 'flex-1 min-w-0 bg-transparent py-3 text-sm font-[var(--font-ui)] text-white/90 placeholder:text-white/25 focus:outline-none',
+    className: 'flex-1 min-w-0 bg-transparent py-3 text-sm font-[var(--font-ui)] text-white/90 placeholder:text-white/25 focus:outline-none transition-all duration-200',
     attrs: { 
       type: 'text', 
       placeholder: 'Press / to focus…',
@@ -1152,12 +1152,12 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   }) as HTMLInputElement;
 
   const chatSendBtn = el('button', {
-    className: 'mr-1 cyber-btn px-4 py-2 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.15em] text-[var(--accent-cyan)] uppercase',
+    className: 'mr-1 cyber-btn px-4 py-2 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.15em] text-[var(--accent-cyan)] uppercase active-press transition-all duration-200',
     text: 'SEND',
   }) as HTMLButtonElement;
 
   const chatStopBtn = el('button', {
-    className: 'mr-1 cyber-btn hidden px-4 py-2 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.15em] text-[var(--accent-red)] uppercase',
+    className: 'mr-1 cyber-btn hidden px-4 py-2 text-[10px] font-[var(--font-display)] font-semibold tracking-[0.15em] text-[var(--accent-red)] uppercase active-press transition-all duration-200 animate-fade-in',
     text: 'STOP',
   }) as HTMLButtonElement;
 

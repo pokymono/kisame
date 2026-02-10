@@ -176,7 +176,7 @@ function toolIcon(status: ToolCallLog['status']): HTMLElement {
 
 function renderToolCall(tool: ToolCallLog): HTMLElement {
   const row = el('div', {
-    className: 'flex items-center gap-2 py-1 group transition-opacity',
+    className: 'flex items-center gap-2 py-1 group transition-all duration-200',
   });
   
   if (tool.status === 'done') {
@@ -186,7 +186,7 @@ function renderToolCall(tool: ToolCallLog): HTMLElement {
   row.append(toolIcon(tool.status));
 
   const label = el('span', {
-    className: 'text-[11px] font-[var(--font-mono)] truncate transition-colors',
+    className: 'text-[11px] font-[var(--font-mono)] truncate transition-colors duration-200',
     text: friendlyToolName(tool.name),
   });
   
@@ -242,7 +242,7 @@ function renderReasoningSummary(summary: string, isStreaming?: boolean): HTMLEle
 
 function renderSuggestedNextSteps(steps: SuggestedNextStep[]): HTMLElement {
   const container = el('div', {
-    className: 'mt-3 flex flex-wrap gap-2',
+    className: 'mt-3 flex flex-wrap gap-2 animate-fade-in-up',
     attrs: { 'data-suggested-next-steps': 'true' },
   });
 
@@ -251,7 +251,7 @@ function renderSuggestedNextSteps(steps: SuggestedNextStep[]): HTMLElement {
       className:
         'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-[var(--font-mono)] ' +
         'tracking-wide bg-white/5 border border-white/10 text-white/70 hover:text-white hover:border-white/30 ' +
-        'hover:bg-white/10 transition-colors',
+        'hover:bg-white/10 transition-all duration-200 active:scale-95 hover:translate-y-[-1px]',
       text: step.label,
       attrs: {
         type: 'button',
@@ -270,14 +270,12 @@ function renderSuggestedNextSteps(steps: SuggestedNextStep[]): HTMLElement {
 export function createMessageElement(message: ChatMessage): HTMLElement {
   if (message.role === 'user') {
     return el('div', {
-      className: 'flex justify-end gap-2 animate-slide-in',
+      className: 'flex justify-end gap-2 animate-slide-in-right',
       children: [
         el('div', {
           className:
             'max-w-[85%] rounded-lg px-4 py-3 text-sm leading-relaxed ' +
-            'bg-gradient-to-br from-[var(--accent-cyan)]/15 to-[var(--accent-cyan)]/5 ' +
-            'border border-[var(--accent-cyan)]/30 text-white/90 ' +
-            'shadow-[0_2px_12px_rgba(0,240,255,0.08)] ' +
+            'bg-white/[0.04] border border-white/[0.08] text-white/90 ' +
             'break-words overflow-hidden',
           text: message.text,
         }),
@@ -286,7 +284,7 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
   }
 
   const messageWrap = el('div', {
-    className: 'flex gap-3 animate-slide-in',
+    className: 'flex gap-3 animate-slide-in-left',
   });
 
   const bubble = el('div', {
@@ -295,12 +293,12 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
 
   if (message.status && message.isStreaming) {
     const statusRow = el('div', {
-      className: 'py-1.5',
+      className: 'py-1.5 animate-fade-in',
       attrs: { 'data-status': 'true' },
     });
 
     const statusText = el('span', {
-      className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] uppercase status-shimmer inline-block px-1 rounded',
+      className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] uppercase status-shimmer inline-block',
       text: message.status,
     });
 
@@ -328,13 +326,13 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
       contentEl.classList.add('typing-cursor');
     }
   } else if (message.isStreaming && !message.status) {
-    contentEl.innerHTML = '<span class="inline-block w-3 h-4 bg-[var(--accent-cyan)]/50 animate-pulse rounded-sm"></span>';
+    contentEl.innerHTML = '<span class="inline-block w-2 h-4 bg-white/30 animate-pulse rounded-sm"></span>';
   }
 
   if (message.toolSummary && !message.isStreaming) {
     const summaryEl = el('div', {
       className: 'mt-3 py-2 px-3 rounded text-[11px] text-white/40 ' +
-        'bg-[var(--app-surface)]/50 border-l-2 border-[var(--accent-teal)]/30 ' +
+        'bg-white/[0.02] border-l-2 border-[var(--accent-teal)]/30 ' +
         'font-[var(--font-mono)] tracking-wide break-words overflow-hidden',
       attrs: { 'data-tool-summary': 'true' },
       text: message.toolSummary,
@@ -364,12 +362,12 @@ export function updateMessageElement(
       if (span) span.textContent = message.status;
     } else {
       const statusRow = el('div', {
-        className: 'py-1.5',
+        className: 'py-1 animate-fade-in',
         attrs: { 'data-status': 'true' },
       });
 
       const statusText = el('span', {
-        className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] uppercase status-shimmer inline-block px-1 rounded',
+        className: 'text-[10px] font-[var(--font-mono)] tracking-[0.15em] uppercase status-shimmer inline-block',
         text: message.status,
       });
 
@@ -413,8 +411,8 @@ export function updateMessageElement(
   if (message.toolSummary && !message.isStreaming) {
     bubble.append(
       el('div', {
-        className: 'mt-3 py-2 px-3 rounded text-[11px] text-white/40 ' +
-          'bg-[var(--app-surface)]/50 border-l-2 border-[var(--accent-teal)]/30 ' +
+        className: 'mt-2 py-2 px-3 rounded text-[11px] text-white/40 ' +
+          'bg-white/[0.03] border-l-2 border-[var(--accent-teal)]/30 ' +
           'font-[var(--font-mono)] tracking-wide break-words overflow-hidden',
         attrs: { 'data-tool-summary': 'true' },
         text: message.toolSummary,
@@ -439,7 +437,7 @@ export function updateMessageElement(
     if (message.text) {
       renderMarkdown(contentEl, message.text, Boolean(message.isStreaming));
     } else if (message.isStreaming && !message.status) {
-      contentEl.innerHTML = '<span class="inline-block w-3 h-4 bg-[var(--accent-cyan)]/50 animate-pulse rounded-sm"></span>';
+      contentEl.innerHTML = '<div class="flex items-center gap-2"><span class="loading-spinner loading-spinner-sm"></span><span class="text-xs text-white/40">Thinking…</span></div>';
     } else if (!message.text) {
       destroyMarkdown(contentEl);
       contentEl.textContent = '';
