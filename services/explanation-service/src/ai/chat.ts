@@ -337,6 +337,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
         });
 
         let receivedText = false;
+        let reasoningBuffer = '';
 
         for await (const part of result.fullStream) {
           if (part.type === 'text-delta') {
@@ -359,7 +360,16 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
             });
           } else if (part.type === 'reasoning-delta') {
             const delta = (part as { textDelta?: string }).textDelta ?? '';
-            if (delta) sendEvent(controller, { type: 'reasoning', delta });
+            if (delta) {
+              reasoningBuffer += delta;
+              sendEvent(controller, { type: 'reasoning', delta });
+            }
+          } else if ((part as any).type === 'reasoning') {
+            const delta = (part as { textDelta?: string; text?: string }).textDelta ?? (part as any).text ?? '';
+            if (delta) {
+              reasoningBuffer += delta;
+              sendEvent(controller, { type: 'reasoning', delta });
+            }
           } else if (part.type === 'tool-result') {
             sendEvent(controller, {
               type: 'tool_result',
@@ -385,6 +395,13 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
           const fallbackText = (await result.text).trim();
           if (fallbackText) {
             sendEvent(controller, { type: 'text', delta: fallbackText });
+          }
+        }
+
+        if (!reasoningBuffer) {
+          const reasoningText = (await (result as any).reasoningText) as string | undefined;
+          if (reasoningText) {
+            sendEvent(controller, { type: 'reasoning', delta: reasoningText });
           }
         }
 

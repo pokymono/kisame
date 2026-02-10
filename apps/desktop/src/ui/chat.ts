@@ -20,8 +20,15 @@ const toolDisplayNames: Record<string, string> = {
   pcap_timeline_range: 'Getting timeline range',
   pcap_event_kinds: 'Listing event types',
   get_evidence_frames: 'Fetching evidence frames',
-  suggested_next_steps: 'Suggesting next steps',
+  suggested_next_steps: 'Suggested next steps',
 };
+
+function friendlyToolName(name: string): string {
+  if (toolDisplayNames[name]) return toolDisplayNames[name];
+  return name
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export interface ChatManagerOptions {
   container: HTMLElement;
@@ -180,7 +187,7 @@ function renderToolCall(tool: ToolCallLog): HTMLElement {
 
   const label = el('span', {
     className: 'text-[11px] font-[var(--font-mono)] truncate transition-colors',
-    text: toolDisplayNames[tool.name] ?? tool.name.replace(/_/g, ' '),
+    text: friendlyToolName(tool.name),
   });
   
   if (tool.status === 'running') {
@@ -285,12 +292,18 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
   if (message.reasoningSummary) {
     const reasoningEl = el('div', {
       className:
-        'mt-2 py-2 px-3 rounded text-[11px] text-white/60 ' +
-        'bg-white/[0.03] border border-white/10 ' +
-        'font-[var(--font-mono)] tracking-wide break-words overflow-hidden',
+        'my-2 py-2 px-3 rounded-lg overflow-hidden ' +
+        'bg-gradient-to-r from-white/[0.02] to-transparent ' +
+        'border-l border-white/[0.06]',
       attrs: { 'data-reasoning-summary': 'true' },
-      text: `Reasoning summary: ${message.reasoningSummary}`,
     });
+    
+    const content = el('div', {
+      className: 'text-[11px] text-white/40 font-[var(--font-mono)] leading-relaxed break-words',
+      text: message.reasoningSummary,
+    });
+    
+    reasoningEl.append(content);
     bubble.append(reasoningEl);
   }
 
@@ -373,16 +386,27 @@ export function updateMessageElement(
   const existingReasoning = bubble.querySelector('[data-reasoning-summary]');
   if (existingReasoning) existingReasoning.remove();
   if (message.reasoningSummary) {
-    bubble.append(
-      el('div', {
-        className:
-          'mt-2 py-2 px-3 rounded text-[11px] text-white/60 ' +
-          'bg-white/[0.03] border border-white/10 ' +
-          'font-[var(--font-mono)] tracking-wide break-words overflow-hidden',
-        attrs: { 'data-reasoning-summary': 'true' },
-        text: `Reasoning summary: ${message.reasoningSummary}`,
-      })
-    );
+    const reasoningEl = el('div', {
+      className:
+        'my-2 py-2 px-3 rounded-lg overflow-hidden ' +
+        'bg-gradient-to-r from-white/[0.02] to-transparent ' +
+        'border-l border-white/[0.06]',
+      attrs: { 'data-reasoning-summary': 'true' },
+    });
+    
+    const content = el('div', {
+      className: 'text-[11px] text-white/40 font-[var(--font-mono)] leading-relaxed break-words',
+      text: message.reasoningSummary,
+    });
+    
+    reasoningEl.append(content);
+    
+    const contentEl = bubble.querySelector('[data-content]');
+    if (contentEl) {
+      contentEl.before(reasoningEl);
+    } else {
+      bubble.append(reasoningEl);
+    }
   }
 
   const existingSummary = bubble.querySelector('[data-tool-summary]');

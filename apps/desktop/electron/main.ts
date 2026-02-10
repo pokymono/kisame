@@ -365,12 +365,14 @@ ipcMain.handle(
     '/bin/sh',
   ].filter(Boolean))) as string[];
 
-  const env = {
-    ...process.env,
-    SHELL: process.env.SHELL || baseShell,
-    TERM: process.env.TERM || 'xterm-256color',
-    PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
-  } as { [key: string]: string };
+  const env = Object.fromEntries(
+    Object.entries({
+      ...process.env,
+      SHELL: process.env.SHELL || baseShell,
+      TERM: process.env.TERM || 'xterm-256color',
+      PATH: process.env.PATH || '/usr/bin:/bin:/usr/sbin:/sbin',
+    }).filter(([, value]) => typeof value === 'string')
+  ) as { [key: string]: string };
 
   let ptyProcess: pty.IPty | null = null;
   let lastError: unknown = null;
@@ -387,8 +389,8 @@ ipcMain.handle(
       try {
         ptyProcess = pty.spawn(shell, [], {
           name: 'xterm-256color',
-          cols: cols || 80,
-          rows: rows || 24,
+          cols: Math.max(1, cols || 0) || 80,
+          rows: Math.max(1, rows || 0) || 24,
           cwd,
           env,
         });

@@ -1960,11 +1960,17 @@ async function initApp() {
 
       const handleEvent = (eventName: string, data: any) => {
         if (eventName === 'status') {
-          // Filter out token/step messages - only show meaningful status
           const stage = (data.stage ?? '').toLowerCase();
           const msg = (data.message ?? '').toLowerCase();
-          if (stage.includes('step') || msg.includes('token') || stage === 'warning' || stage === 'reasoning') {
-            return; // Skip these status updates
+          if (
+            stage.includes('step') || 
+            msg.includes('token') || 
+            stage === 'warning' || 
+            stage === 'reasoning' ||
+            stage === 'tool_call' ||
+            stage === 'tool_result'
+          ) {
+            return;
           }
           aiMessage.status = data.message ?? data.stage;
         } else if (eventName === 'text') {
@@ -2271,7 +2277,8 @@ async function initApp() {
     terminal.open(container);
     
     // Create PTY process
-    const { cols, rows } = terminal;
+    const cols = Math.max(terminal.cols || 0, 80);
+    const rows = Math.max(terminal.rows || 0, 24);
     const result = await window.electronAPI.terminal.create(cols, rows);
     if (!result.success) {
       const message = result.error ? `Terminal error: ${result.error}` : 'Terminal error: failed to start PTY';
@@ -2283,21 +2290,18 @@ async function initApp() {
     }
     const id = result.id;
     
-    // Create instance object
     const instance: TerminalInstance = {
       id,
       name,
       terminal,
       fitAddon,
       container,
-      tab: document.createElement('div'), // Placeholder, will be replaced
+      tab: document.createElement('div'),
     };
     
-    // Create and add tab
     instance.tab = createTerminalTab(instance);
     ui.terminalTabsContainer.appendChild(instance.tab);
     
-    // Store instance
     terminals.set(id, instance);
     
     // Send input to PTY
