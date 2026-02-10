@@ -1288,3 +1288,40 @@
     display: none !important;
   }
 }
+
+.onboarding-overlay {
+  -webkit-app-region: no-drag;
+}
+
+.onboarding-modal {
+  -webkit-app-region: no-drag;
+}
+
+.onboarding-modal:focus {
+  outline: none;
+}
+
+.onboarding-steps [data-step] {
+  transition: all 0.2s ease;
+}
+
+.onboarding-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.onboarding-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.onboarding-content::-webkit-scrollbar-thumb {
+  background: var(--app-line-strong);
+  border-radius: 2px;
+}
+
+.onboarding-content::-webkit-scrollbar-thumb:hover {
+  background: var(--app-text-faint);
+}
+
+.onboarding-modal button[data-provider]:hover {
+  border-color: var(--app-line-strong) !important;
+}

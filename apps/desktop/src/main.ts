@@ -2,6 +2,7 @@ import './index.css';
 import { createAppShell } from './ui/app-shell';
 import { el } from './ui/dom';
 import { ChatManager } from './ui/chat';
+import { createDefaultOnboarding } from './ui/onboarding';
 import type { AnalysisArtifact, ChatMessage, ToolCallLog } from './types';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -13,11 +14,35 @@ type CaptureInterface = {
   description?: string;
 };
 
+const ONBOARDING_COMPLETE_KEY = 'kisame.onboarding.complete';
+
+function hasCompletedOnboarding(): boolean {
+  return localStorage.getItem(ONBOARDING_COMPLETE_KEY) === 'true';
+}
+
+function markOnboardingComplete(): void {
+  localStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
+}
+
 async function initApp() {
   const root = document.getElementById('root');
   if (!root) return;
 
   const ui = createAppShell(root);
+
+  if (!hasCompletedOnboarding()) {
+    const onboarding = createDefaultOnboarding({
+      onComplete: () => {
+        markOnboardingComplete();
+        console.log('[Kisame] Onboarding completed');
+      },
+      onSkip: () => {
+        markOnboardingComplete();
+        console.log('[Kisame] Onboarding skipped');
+      },
+    });
+    onboarding.show();
+  }
 
   let analysis: AnalysisArtifact | null = null;
   let selectedSessionId: string | null = null;
@@ -158,15 +183,12 @@ async function initApp() {
     setAnalyzeScreenButtonState(ui.analyzeScreenWorkflowsButton, screen === 'workflows');
     ui.analyzeScreenLabel.textContent = screen.toUpperCase();
     
-    // Add smooth transition effect
     ui.analyzeScreenHost.classList.add('screen-transition', 'transitioning');
     
     requestAnimationFrame(() => {
       mountAnalyzeScreen(screen);
-      // Allow the DOM to settle before removing transition class
       requestAnimationFrame(() => {
         ui.analyzeScreenHost.classList.remove('transitioning');
-        // Clean up after transition completes
         setTimeout(() => {
           ui.analyzeScreenHost.classList.remove('screen-transition');
         }, 200);
