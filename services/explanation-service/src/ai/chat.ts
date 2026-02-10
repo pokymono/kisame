@@ -401,8 +401,23 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
         if (!reasoningBuffer) {
           const reasoningText = (await (result as any).reasoningText) as string | undefined;
           if (reasoningText) {
+            reasoningBuffer = reasoningText;
             sendEvent(controller, { type: 'reasoning', delta: reasoningText });
           }
+        }
+
+        if (reasoningBuffer) {
+          logInfo('ai.stream.reasoning', {
+            session_id: context?.session_id ?? null,
+            chars: reasoningBuffer.length,
+            preview: reasoningBuffer.slice(0, 400),
+          });
+        } else {
+          logInfo('ai.stream.reasoning', {
+            session_id: context?.session_id ?? null,
+            chars: 0,
+            preview: '',
+          });
         }
 
         const toolResults = await result.toolResults;
