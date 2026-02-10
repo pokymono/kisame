@@ -26,6 +26,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendChatQuery: (query: string, context?: { session_id?: string; artifact?: unknown }) =>
     ipcRenderer.invoke('kisame:sendChatQuery', query, context) as Promise<ChatQueryResult>,
   getBackendUrl: () => ipcRenderer.invoke('kisame:getBackendUrl') as Promise<string>,
+  saveExportFile: (payload: { suggestedName: string; content: string; filters?: { name: string; extensions: string[] }[] }) =>
+    ipcRenderer.invoke('kisame:saveExportFile', payload) as Promise<{ canceled: true } | { canceled: false; filePath: string }>,
+  saveExportBundle: (payload: { folderName?: string; files: { name: string; content: string }[] }) =>
+    ipcRenderer.invoke('kisame:saveExportBundle', payload) as Promise<{ canceled: true } | { canceled: false; folderPath: string; filesWritten: string[] }>,
+  saveExportPdf: (payload: { html: string; suggestedName?: string; fileName?: string; folderPath?: string }) =>
+    ipcRenderer.invoke('kisame:saveExportPdf', payload) as Promise<{ canceled: true } | { canceled: false; filePath: string }>,
   onUploadProgress: (handler: (event: UploadProgressEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: UploadProgressEvent) => {
       handler(payload);

@@ -31,6 +31,21 @@ export interface ElectronAPI {
     context?: { session_id?: string; artifact?: unknown }
   ) => Promise<ChatQueryResult>;
   getBackendUrl: () => Promise<string>;
+  saveExportFile: (payload: {
+    suggestedName: string;
+    content: string;
+    filters?: { name: string; extensions: string[] }[];
+  }) => Promise<{ canceled: true } | { canceled: false; filePath: string }>;
+  saveExportBundle: (payload: {
+    folderName?: string;
+    files: { name: string; content: string }[];
+  }) => Promise<{ canceled: true } | { canceled: false; folderPath: string; filesWritten: string[] }>;
+  saveExportPdf: (payload: {
+    html: string;
+    suggestedName?: string;
+    fileName?: string;
+    folderPath?: string;
+  }) => Promise<{ canceled: true } | { canceled: false; filePath: string }>;
   onUploadProgress: (
     handler: (event: {
       stage: 'idle' | 'upload' | 'analyze' | 'done' | 'error';

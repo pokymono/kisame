@@ -68,6 +68,9 @@ async function initApp() {
     ui.chatColumn.classList.toggle('hidden', !showAnalysis);
     ui.capturePanel.classList.toggle('hidden', tab !== 'capture');
     ui.exportPanel.classList.toggle('hidden', tab !== 'export');
+    if (tab === 'export') {
+      updateExportSummary();
+    }
   }
 
   const screenBtnBase =
@@ -624,6 +627,410 @@ async function initApp() {
     return `${bytes} B`;
   };
 
+  const EXPORT_SETTINGS_KEY = 'kisame.export.settings';
+  type ExportSettings = {
+    report: boolean;
+    pdf: boolean;
+    json: boolean;
+    timeline: boolean;
+    sessions: boolean;
+    ioc: boolean;
+  };
+
+  const loadExportSettings = (): ExportSettings => {
+    try {
+      const raw = window.localStorage.getItem(EXPORT_SETTINGS_KEY);
+      if (!raw) throw new Error('missing');
+      const parsed = JSON.parse(raw) as Partial<ExportSettings>;
+      return {
+        report: parsed.report ?? true,
+        pdf: parsed.pdf ?? false,
+        json: parsed.json ?? true,
+        timeline: parsed.timeline ?? true,
+        sessions: parsed.sessions ?? true,
+        ioc: parsed.ioc ?? true,
+      };
+    } catch {
+      return { report: true, pdf: false, json: true, timeline: true, sessions: true, ioc: true };
+    }
+  };
+
+  const saveExportSettings = (settings: ExportSettings) => {
+    window.localStorage.setItem(EXPORT_SETTINGS_KEY, JSON.stringify(settings));
+  };
+
+  const exportInputs = {
+    report: ui.exportReportCheckbox,
+    pdf: ui.exportPdfCheckbox,
+    json: ui.exportJsonCheckbox,
+    timeline: ui.exportTimelineCheckbox,
+    sessions: ui.exportSessionsCheckbox,
+    ioc: ui.exportIocCheckbox,
+  };
+
+  const applyExportSettings = (settings: ExportSettings) => {
+    exportInputs.report.checked = settings.report;
+    exportInputs.json.checked = settings.json;
+    exportInputs.timeline.checked = settings.timeline;
+    exportInputs.sessions.checked = settings.sessions;
+    exportInputs.ioc.checked = settings.ioc;
+  };
+
+  const collectExportSettings = (): ExportSettings => ({
+    report: exportInputs.report.checked,
+    pdf: exportInputs.pdf.checked,
+    json: exportInputs.json.checked,
+    timeline: exportInputs.timeline.checked,
+    sessions: exportInputs.sessions.checked,
+    ioc: exportInputs.ioc.checked,
+  });
+
+  applyExportSettings(loadExportSettings());
+  Object.values(exportInputs).forEach((input) => {
+    input.addEventListener('change', () => saveExportSettings(collectExportSettings()));
+  });
+
+  const formatIso = (ts?: number | null) => {
+    if (!ts) return '—';
+    return new Date(ts * 1000).toISOString();
+  };
+
+  const csvEscape = (value: unknown) => {
+    if (value === null || value === undefined) return '';
+    const str = String(value);
+    if (/[",\n]/.test(str)) {
+      return `"${str.replace(/"/g, '""')}"`;
+    }
+    return str;
+  };
+
+  const buildEndpoint = (ep: { ip: string; port: number | null }) =>
+    `${ep.ip}${ep.port ? `:${ep.port}` : ''}`;
+
+  const extractIocs = (artifact: AnalysisArtifact) => {
+    const dns = new Set<string>();
+    const sni = new Set<string>();
+    const hosts = new Set<string>();
+    const ips = new Set<string>();
+    for (const session of artifact.sessions) {
+      ips.add(session.endpoints.a.ip);
+      ips.add(session.endpoints.b.ip);
+    }
+    for (const event of artifact.timeline) {
+      if (event.meta?.dns_name) dns.add(event.meta.dns_name);
+      if (event.meta?.sni) sni.add(event.meta.sni);
+      if (event.meta?.http?.host) hosts.add(event.meta.http.host);
+    }
+    return {
+      dns: Array.from(dns).sort(),
+      sni: Array.from(sni).sort(),
+      hosts: Array.from(hosts).sort(),
+      ips: Array.from(ips).sort(),
+    };
+  };
+
+  const buildMarkdownReport = (artifact: AnalysisArtifact) => {
+    const lines: string[] = [];
+    const iocs = extractIocs(artifact);
+
+    lines.push(`# Kisame Forensics Report`);
+    lines.push('');
+    lines.push(`Generated: ${new Date().toISOString()}`);
+    lines.push('');
+    lines.push('## Capture Summary');
+    lines.push('');
+    lines.push(`- File: \`${artifact.pcap.file_name}\``);
+    lines.push(`- Session ID: \`${artifact.pcap.session_id}\``);
+    lines.push(`- Packets analyzed: ${artifact.pcap.packets_analyzed}`);
+    lines.push(`- Time range: ${formatIso(artifact.pcap.first_ts)} → ${formatIso(artifact.pcap.last_ts)}`);
+    lines.push(`- Sessions: ${artifact.sessions.length}`);
+    lines.push(`- Timeline events: ${artifact.timeline.length}`);
+    if (artifact.tooling?.tshark_path) {
+      lines.push(`- TShark: \`${artifact.tooling.tshark_path}\` (${artifact.tooling.tshark_version ?? 'unknown'})`);
+    }
+
+    lines.push('');
+    lines.push('## Session Summary');
+    lines.push('');
+    lines.push('| Session | Transport | Endpoints | Packets | Bytes | Flags |');
+    lines.push('| --- | --- | --- | --- | --- | --- |');
+    for (const session of artifact.sessions) {
+      const flags = session.rule_flags?.join(', ') ?? '';
+      lines.push(
+        `| ${session.id} | ${session.transport} | ${buildEndpoint(session.endpoints.a)} ↔ ${buildEndpoint(
+          session.endpoints.b
+        )} | ${session.packet_count} | ${formatBytes(session.byte_count)} | ${flags} |`
+      );
+    }
+
+    lines.push('');
+    lines.push('## Timeline');
+    lines.push('');
+    lines.push('| Timestamp | Kind | Summary | Evidence |');
+    lines.push('| --- | --- | --- | --- |');
+    for (const event of artifact.timeline) {
+      lines.push(
+        `| ${formatIso(event.ts)} | ${event.kind} | ${event.summary.replace(/\|/g, '\\|')} | #${event.evidence_frame} |`
+      );
+    }
+
+    lines.push('');
+    lines.push('## Indicators');
+    lines.push('');
+    lines.push(`- IPs: ${iocs.ips.join(', ') || '—'}`);
+    lines.push(`- DNS: ${iocs.dns.join(', ') || '—'}`);
+    lines.push(`- SNI: ${iocs.sni.join(', ') || '—'}`);
+    lines.push(`- HTTP Hosts: ${iocs.hosts.join(', ') || '—'}`);
+
+    return lines.join('\n');
+  };
+
+  const buildReportHtml = (markdown: string) => {
+    const escaped = markdown
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Kisame Report</title>
+    <style>
+      body { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; margin: 32px; color: #0e1114; }
+      h1,h2,h3 { font-family: "IBM Plex Sans", Arial, sans-serif; margin: 24px 0 8px; }
+      h1 { font-size: 22px; }
+      h2 { font-size: 16px; text-transform: uppercase; letter-spacing: 0.08em; }
+      table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 12px; }
+      th, td { border: 1px solid #d0d4d9; padding: 6px 8px; text-align: left; }
+      pre { white-space: pre-wrap; font-size: 11px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <pre>${escaped}</pre>
+  </body>
+</html>`;
+  };
+
+  const fetchReportMarkdown = async (artifact: AnalysisArtifact) => {
+    try {
+      const res = await fetch(`${explanationBaseUrl}/report`, {
+        method: 'POST',
+        headers: withClientHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ artifact }),
+      });
+      if (!res.ok) {
+        return null;
+      }
+      const data = (await res.json()) as { report_markdown?: string };
+      if (!data?.report_markdown) return null;
+      return data.report_markdown;
+    } catch {
+      return null;
+    }
+  };
+
+  const buildTimelineCsv = (artifact: AnalysisArtifact) => {
+    const rows = [
+      ['timestamp', 'session_id', 'kind', 'summary', 'evidence_frame', 'dns', 'sni', 'http_method', 'http_host', 'http_uri'],
+    ];
+    for (const event of artifact.timeline) {
+      rows.push([
+        formatIso(event.ts),
+        event.session_id,
+        event.kind,
+        event.summary,
+        String(event.evidence_frame),
+        event.meta?.dns_name ?? '',
+        event.meta?.sni ?? '',
+        event.meta?.http?.method ?? '',
+        event.meta?.http?.host ?? '',
+        event.meta?.http?.uri ?? '',
+      ]);
+    }
+    return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
+  };
+
+  const buildSessionsCsv = (artifact: AnalysisArtifact) => {
+    const rows = [
+      ['session_id', 'transport', 'endpoint_a', 'endpoint_b', 'first_ts', 'last_ts', 'duration_seconds', 'packets', 'bytes', 'flags'],
+    ];
+    for (const session of artifact.sessions) {
+      rows.push([
+        session.id,
+        session.transport,
+        buildEndpoint(session.endpoints.a),
+        buildEndpoint(session.endpoints.b),
+        formatIso(session.first_ts),
+        formatIso(session.last_ts),
+        session.duration_seconds?.toFixed(2) ?? '',
+        String(session.packet_count),
+        String(session.byte_count),
+        session.rule_flags?.join(';') ?? '',
+      ]);
+    }
+    return rows.map((row) => row.map(csvEscape).join(',')).join('\n');
+  };
+
+  const buildIocTxt = (artifact: AnalysisArtifact) => {
+    const iocs = extractIocs(artifact);
+    return [
+      '# Kisame IOC Summary',
+      '',
+      '[IP]',
+      ...iocs.ips,
+      '',
+      '[DNS]',
+      ...iocs.dns,
+      '',
+      '[SNI]',
+      ...iocs.sni,
+      '',
+      '[HTTP_HOST]',
+      ...iocs.hosts,
+      '',
+    ].join('\n');
+  };
+
+  const updateExportSummary = () => {
+    if (!analysis) {
+      ui.exportSummary.textContent = 'Load a capture to see export coverage.';
+      ui.exportStatus.textContent = 'Ready to export.';
+      ui.exportButton.disabled = true;
+      ui.exportBundleButton.disabled = true;
+      ui.exportButton.classList.add('opacity-50');
+      ui.exportBundleButton.classList.add('opacity-50');
+      return;
+    }
+    ui.exportButton.disabled = false;
+    ui.exportBundleButton.disabled = false;
+    ui.exportButton.classList.remove('opacity-50');
+    ui.exportBundleButton.classList.remove('opacity-50');
+    const summaryLines = [
+      `File: ${analysis.pcap.file_name}`,
+      `Sessions: ${analysis.sessions.length}`,
+      `Timeline events: ${analysis.timeline.length}`,
+      `Packets analyzed: ${analysis.pcap.packets_analyzed}`,
+      `Time range: ${formatIso(analysis.pcap.first_ts)} → ${formatIso(analysis.pcap.last_ts)}`,
+    ];
+    ui.exportSummary.textContent = summaryLines.join('\n');
+    ui.exportStatus.textContent = 'Ready to export.';
+  };
+
+  type ExportFile = { name: string; content: string; mime: string };
+
+  const buildExportFiles = (artifact: AnalysisArtifact, settings: ExportSettings): ExportFile[] => {
+    const files: ExportFile[] = [];
+    const baseName = artifact.pcap.file_name.replace(/\.(pcap|pcapng)$/i, '') || 'capture';
+
+    if (settings.report) {
+      files.push({
+        name: `${baseName}.report.md`,
+        content: buildMarkdownReport(artifact),
+        mime: 'text/markdown',
+      });
+    }
+    if (settings.json) {
+      files.push({
+        name: `${baseName}.analysis.json`,
+        content: JSON.stringify(artifact, null, 2),
+        mime: 'application/json',
+      });
+    }
+    if (settings.timeline) {
+      files.push({
+        name: `${baseName}.timeline.csv`,
+        content: buildTimelineCsv(artifact),
+        mime: 'text/csv',
+      });
+    }
+    if (settings.sessions) {
+      files.push({
+        name: `${baseName}.sessions.csv`,
+        content: buildSessionsCsv(artifact),
+        mime: 'text/csv',
+      });
+    }
+    if (settings.ioc) {
+      files.push({
+        name: `${baseName}.ioc.txt`,
+        content: buildIocTxt(artifact),
+        mime: 'text/plain',
+      });
+    }
+    return files;
+  };
+
+  const performExport = async (bundle: boolean) => {
+    if (!analysis) {
+      ui.exportStatus.textContent = 'No capture loaded.';
+      return;
+    }
+    const settings = collectExportSettings();
+    const files = buildExportFiles(analysis, settings);
+    if (!files.length && !settings.pdf) {
+      ui.exportStatus.textContent = 'Select at least one export format.';
+      return;
+    }
+
+    ui.exportStatus.textContent = bundle ? 'Preparing bundle…' : 'Preparing export…';
+
+    let reportMarkdown: string | null = null;
+    if (settings.report || settings.pdf) {
+      reportMarkdown = (await fetchReportMarkdown(analysis)) ?? buildMarkdownReport(analysis);
+      if (settings.report) {
+        const reportFile = files.find((f) => f.name.endsWith('.report.md'));
+        if (reportFile && reportMarkdown) {
+          reportFile.content = reportMarkdown;
+        }
+      }
+    }
+
+    if (bundle || files.length > 1) {
+      const res = await window.electronAPI?.saveExportBundle?.({
+        folderName: analysis.pcap.file_name.replace(/\.(pcap|pcapng)$/i, '') || 'kisame-export',
+        files: files.map((f) => ({ name: f.name, content: f.content })),
+      });
+      if (!res || res.canceled) {
+        ui.exportStatus.textContent = 'Export canceled.';
+        return;
+      }
+      if (settings.pdf && reportMarkdown) {
+        await window.electronAPI?.saveExportPdf?.({
+          html: buildReportHtml(reportMarkdown),
+          fileName: `${analysis.pcap.file_name.replace(/\.(pcap|pcapng)$/i, '') || 'capture'}.report.pdf`,
+          folderPath: res.folderPath,
+        });
+      }
+      ui.exportStatus.textContent = `Exported ${files.length + (settings.pdf ? 1 : 0)} files.`;
+      return;
+    }
+
+    if (files.length) {
+      const file = files[0];
+      const res = await window.electronAPI?.saveExportFile?.({
+        suggestedName: file.name,
+        content: file.content,
+        filters: [{ name: 'Export', extensions: [file.name.split('.').pop() ?? 'txt'] }],
+      });
+      if (!res || res.canceled) {
+        ui.exportStatus.textContent = 'Export canceled.';
+        return;
+      }
+    }
+    if (settings.pdf && reportMarkdown) {
+      const pdfRes = await window.electronAPI?.saveExportPdf?.({
+        html: buildReportHtml(reportMarkdown),
+        suggestedName: `${analysis.pcap.file_name.replace(/\.(pcap|pcapng)$/i, '') || 'capture'}.report.pdf`,
+      });
+      if (!pdfRes || pdfRes.canceled) {
+        ui.exportStatus.textContent = 'Export canceled.';
+        return;
+      }
+    }
+    ui.exportStatus.textContent = 'Export complete.';
+  };
+
   function loadWorkflows(): Workflow[] {
     try {
       const raw = window.localStorage.getItem(WORKFLOWS_STORAGE_KEY);
@@ -899,7 +1306,7 @@ async function initApp() {
 
     const rows = workflows.map((wf) => {
       const row = el('button', {
-        className: 'w-full rounded px-3 py-3 text-left transition-all data-card',
+        className: 'w-full rounded px-3 py-3 text-left transition-all data-card workflow-card',
         attrs: { type: 'button', 'data-workflow-id': wf.id },
         children: [
           el('div', {
@@ -1017,38 +1424,6 @@ async function initApp() {
     return workflows.find((w) => w.autoRun && w.prompts.length > 0) ?? null;
   }
 
-  function getRunnableWorkflows(): Workflow[] {
-    return workflows.filter((w) => w.prompts.length > 0);
-  }
-
-  async function promptPickWorkflowToRunAfterCaptureLoad(): Promise<Workflow | null> {
-    const runnable = getRunnableWorkflows();
-    if (!runnable.length) return null;
-
-    const defaultWorkflow = getAutoRunWorkflow();
-    const body =
-      runnable.length === 1
-        ? `Run "${runnable[0].name}" now?`
-        : defaultWorkflow
-          ? `Select a workflow to run now. Default is "${defaultWorkflow.name}".`
-          : 'Select a workflow to run now.';
-
-    const result = await openWorkflowModal({
-      title: 'Run workflow now?',
-      subtitle: 'WORKFLOWS',
-      body,
-      workflows: runnable,
-      defaultId: defaultWorkflow?.id ?? runnable[0]?.id ?? null,
-      confirmLabel: 'RUN',
-      cancelLabel: 'SKIP',
-      confirmIntent: 'primary',
-    });
-
-    if (result.action !== 'confirm') return null;
-    const selected = runnable.find((wf) => wf.id === result.selectedId) ?? null;
-    return selected;
-  }
-
   async function runWorkflow(workflow: Workflow): Promise<void> {
     if (isWorkflowRunning) return;
     if (!analysis) {
@@ -1081,10 +1456,10 @@ async function initApp() {
     }
   }
 
-  async function maybePromptRunWorkflowAfterCaptureLoad(): Promise<void> {
+  async function maybeRunAutoWorkflowAfterCaptureLoad(): Promise<void> {
     if (isWorkflowRunning) return;
     if (!analysis) return;
-    const wf = await promptPickWorkflowToRunAfterCaptureLoad();
+    const wf = getAutoRunWorkflow();
     if (!wf) return;
     await runWorkflow(wf);
   }
@@ -1096,7 +1471,7 @@ async function initApp() {
     }
     workflowPromptTimer = window.setTimeout(() => {
       workflowPromptTimer = null;
-      void maybePromptRunWorkflowAfterCaptureLoad();
+      void maybeRunAutoWorkflowAfterCaptureLoad();
     }, 0);
   }
 
@@ -1448,6 +1823,7 @@ async function initApp() {
       analysis = cached;
       captureSessionId = cached.pcap?.session_id ?? sessionId;
       selectedSessionId = null;
+      updateExportSummary();
       render();
       setActiveTab('analyze');
       return;
@@ -1467,10 +1843,10 @@ async function initApp() {
     analysisCache.set(cacheKey, analysis);
     captureSessionId = cacheKey;
     selectedSessionId = null;
+    updateExportSummary();
     setAnalyzeScreen('overview');
     render();
     setActiveTab('analyze');
-    schedulePromptRunWorkflowAfterCaptureLoad();
   }
 
   function setWelcomeVisible(visible: boolean) {
@@ -1609,12 +1985,12 @@ async function initApp() {
       captureSessionId = analysis.pcap?.session_id ?? stopData.session_id;
       analysisCache.set(captureSessionId, analysis);
       selectedSessionId = null;
+      updateExportSummary();
       stoppedOk = true;
       setAnalyzeScreen('overview');
       render();
       setActiveTab('analyze');
       void refreshExplorerCaptures();
-      schedulePromptRunWorkflowAfterCaptureLoad();
     } catch (err) {
       ui.captureBadge.textContent = liveCaptureInterface
         ? `Live: ${liveCaptureInterface}`
@@ -2344,6 +2720,7 @@ async function initApp() {
         analysisCache.set(captureSessionId, analysis);
       }
       selectedSessionId = null;
+      updateExportSummary();
       timelineScope = 'session';
       timelineSearchQuery = '';
       timelineKindFilter = 'all';
@@ -2354,7 +2731,6 @@ async function initApp() {
       render();
       setActiveTab('analyze');
       void refreshExplorerCaptures();
-      schedulePromptRunWorkflowAfterCaptureLoad();
     } catch (err) {
       console.error(err);
       alert((err as Error).message ?? String(err));
@@ -2628,6 +3004,13 @@ async function initApp() {
   ui.navCaptureButton.addEventListener('click', () => setActiveTab('capture'));
   ui.navAnalyzeButton.addEventListener('click', () => setActiveTab('analyze'));
   ui.navExportButton.addEventListener('click', () => setActiveTab('export'));
+
+  ui.exportButton.addEventListener('click', () => {
+    void performExport(false);
+  });
+  ui.exportBundleButton.addEventListener('click', () => {
+    void performExport(true);
+  });
 
   // ============ Multi-Terminal System ============
   interface TerminalInstance {

@@ -14,3 +14,4 @@ export {
   handleGetLiveCapture,
 } from './live-capture';
 export { handleChat, handleChatStream } from './chat';
+export { handleReport } from './report';

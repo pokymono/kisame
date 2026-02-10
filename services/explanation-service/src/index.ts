@@ -15,6 +15,7 @@ import {
   handleGetLiveCapture,
   handleChat,
   handleChatStream,
+  handleReport,
 } from './routes';
 
 await initPcapStorage();
@@ -73,6 +74,8 @@ async function handleRequest(req: Request): Promise<Response> {
       response = await handleChatStream(req);
     } else if (method === 'POST' && pathname === '/chat') {
       response = await handleChat(req);
+    } else if (method === 'POST' && pathname === '/report') {
+      response = await handleReport(req);
     } else {
       response = json({ error: 'Not found' }, { status: 404 });
     }

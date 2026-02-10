@@ -72,6 +72,16 @@ export type AppShellRefs = {
   sessionKeyPanel: HTMLElement;
   insightsPanel: HTMLElement;
   workflowsPanel: HTMLElement;
+  exportReportCheckbox: HTMLInputElement;
+  exportJsonCheckbox: HTMLInputElement;
+  exportTimelineCheckbox: HTMLInputElement;
+  exportSessionsCheckbox: HTMLInputElement;
+  exportIocCheckbox: HTMLInputElement;
+  exportPdfCheckbox: HTMLInputElement;
+  exportButton: HTMLButtonElement;
+  exportBundleButton: HTMLButtonElement;
+  exportStatus: HTMLElement;
+  exportSummary: HTMLElement;
   workflowList: HTMLElement;
   workflowNameInput: HTMLInputElement;
   workflowScopeSelect: HTMLSelectElement;
@@ -220,7 +230,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   topRight.append(statusDot, uploadIndicator, captureBadge);
   topBar.append(topLeft, topRight);
 
-  // Main content grid - responsive with proper overflow
   const body = el('div', {
     className: 'relative z-10 grid h-[calc(100%-2.25rem)] overflow-hidden main-grid-responsive',
   });
@@ -262,14 +271,12 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   if (persistedChatW) body.style.setProperty('--chat-w', `${persistedChatW}px`);
   if (persistedEvidenceH) body.style.setProperty('--evidence-h', `${persistedEvidenceH}px`);
 
-  // Left navigation rail
   const navRail = el('div', {
     className: 'col-start-1 row-start-1 flex flex-col items-center justify-between py-4 border-r border-[var(--app-line)] bg-[var(--app-surface)]/50',
   });
 
   const navRailTop = el('div', { className: 'flex flex-col items-center gap-3' });
   
-  // Analysis button (active by default)
   const navAnalysisRailBtn = el('button', {
     className: 'group relative size-9 rounded flex items-center justify-center transition-all bg-[var(--accent-cyan)]/10 border border-[var(--accent-cyan)]/40',
   }) as HTMLButtonElement;
@@ -277,7 +284,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   analysisIcon.classList.add('size-4', 'text-[var(--accent-cyan)]', 'group-hover:text-white/70', 'transition-colors');
   navAnalysisRailBtn.append(analysisIcon);
   
-  // Terminal button
   const navTerminalButton = el('button', {
     className: 'group relative size-9 rounded flex items-center justify-center transition-all hover:bg-white/5 border border-transparent',
     attrs: { title: 'Terminal' },
@@ -286,7 +292,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   terminalIcon.classList.add('size-4', 'text-white/40', 'group-hover:text-white/70', 'transition-colors');
   navTerminalButton.append(terminalIcon);
   
-  // Waveform button
   const navWaveformBtn = el('button', {
     className: 'group relative size-9 rounded flex items-center justify-center transition-all hover:bg-white/5 border border-transparent',
   }) as HTMLButtonElement;
@@ -673,7 +678,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     });
   }
 
-  // Resize handles (overlay)
   const explorerResizeHandle = el('div', {
     className: 'resize-handle absolute inset-y-0 w-2 -ml-1 cursor-col-resize z-30',
     attrs: { style: 'left: calc(var(--nav-w) + var(--explorer-w));' },
@@ -739,7 +743,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     }
   );
 
-  // Welcome panel overlay
   const welcomePanel = el('div', {
     className: 'absolute inset-0 flex items-center justify-center app-welcome-bg pointer-events-none z-10',
   });
@@ -748,7 +751,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'relative max-w-2xl text-center px-8',
   });
 
-  // Decorative hex grid behind welcome
   const hexGrid = el('div', {
     className: 'absolute inset-0 flex items-center justify-center opacity-5',
   });
@@ -828,7 +830,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   welcomeContent.append(hexGrid, welcomeLogo, welcomeTitle, welcomeSubtitle, welcomeBody, accentBar, statsRow);
   welcomePanel.append(welcomeContent);
 
-  // Terminal Panel (replaces evidence panel)
   const terminalPanel = el('section', {
     className: 'h-full flex min-w-0 flex-col overflow-hidden border-t border-[var(--app-line)]',
   });
@@ -837,12 +838,10 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'flex items-center gap-1 px-2 py-1 border-b border-[var(--app-line)] bg-[var(--app-surface)]/50',
   });
 
-  // Terminal tabs container
   const terminalTabsContainer = el('div', {
     className: 'flex items-center gap-1 flex-1 overflow-x-auto scrollbar-none',
   });
 
-  // Add terminal button
   const terminalAddButton = el('button', {
     className: 'flex items-center justify-center size-6 rounded hover:bg-white/10 text-white/40 hover:text-white/70 transition-colors',
     attrs: { type: 'button', title: 'New Terminal (Ctrl+Shift+`)' },
@@ -863,7 +862,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   terminalHeader.append(terminalTabsContainer, terminalAddButton, terminalSplitButton, terminalMaximizeButton);
 
-  // Container for xterm.js - removed padding, full height
   const terminalContainer = el('div', {
     className: 'flex-1 min-h-0 overflow-hidden bg-[#2c2f33] relative',
     attrs: { id: 'terminal-container' },
@@ -1043,7 +1041,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     attrs: { style: 'grid-template-columns: var(--sessions-w) minmax(0,1fr);' },
   });
 
-  // Default mount = overview.
   overviewTopLayout.append(sessionsPanel, timelinePanel, sessionsSplitHandle);
   overviewLayout.append(overviewTopLayout, terminalPanel, overviewEvidenceHandle);
   analyzeScreenHost.append(overviewLayout, welcomePanel);
@@ -1193,7 +1190,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     className: 'flex-1 overflow-auto p-6 grid grid-cols-2 gap-6 content-start',
   });
 
-  // Open PCAP Card
   const openCard = el('div', {
     className: 'relative group data-card rounded-lg p-5 flex flex-col gap-4 overflow-hidden',
   });
@@ -1229,7 +1225,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
 
   openCard.append(openCardGlow, openCardHeader, openCardDesc, openCardFooter);
 
-  // Live Capture Card
   const liveCard = el('div', {
     className: 'relative group data-card rounded-lg p-5 flex flex-col gap-4 overflow-hidden',
   });
@@ -1256,7 +1251,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     text: 'Capture packets from a network interface and stream directly into Kisame for analysis.',
   });
 
-  // Live capture status indicator
   const liveCaptureStatus = el('div', {
     className: 'flex items-center gap-2 px-3 py-2 rounded bg-[var(--app-bg)] border border-[var(--app-line)]',
   });
@@ -1279,9 +1273,6 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
   captureGrid.append(openCard, liveCard);
   capturePanel.append(captureHeader, captureGrid);
 
-  // ============================================================================
-  // EXPORT PANEL
-  // ============================================================================
   const exportPanel = el('section', {
     className:
       'col-start-3 col-span-3 row-start-1 hidden flex flex-col overflow-hidden border-l border-[var(--app-line)] bg-gradient-to-b from-[var(--app-surface)]/70 to-transparent',
@@ -1301,9 +1292,92 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     el('span', { className: 'data-label', text: 'REPORTS + ARTIFACTS' })
   );
   const exportBody = el('div', {
-    className: 'flex-1 flex items-center justify-center text-center px-8 text-white/40 text-sm',
-    text: 'Export pipelines will appear here.',
+    className: 'flex-1 grid grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)] gap-6 p-6 overflow-y-auto',
   });
+
+  const exportBuilder = el('div', {
+    className: 'export-card rounded-xl border border-[var(--app-line)] bg-[var(--app-surface)]/60 p-5',
+  });
+  const exportBuilderTitle = el('div', {
+    className: 'text-[11px] font-[var(--font-display)] tracking-[0.25em] text-[var(--accent-cyan)] uppercase',
+    text: 'Report Builder',
+  });
+  const exportBuilderSubtitle = el('div', {
+    className: 'mt-2 text-[11px] text-white/45 leading-relaxed',
+    text: 'Generate a forensics-grade export with evidence, timeline, and session summaries.',
+  });
+
+  const exportFormats = el('div', { className: 'mt-4 space-y-3' });
+
+  const buildCheckbox = (label: string, description: string) => {
+    const row = el('label', { className: 'export-row flex items-start gap-3 rounded-lg border border-transparent p-3 transition-all' });
+    const input = el('input', {
+      attrs: { type: 'checkbox' },
+      className: 'mt-1',
+    }) as HTMLInputElement;
+    const textWrap = el('div');
+    const title = el('div', {
+      className: 'text-[11px] font-[var(--font-mono)] text-white/80 uppercase tracking-wider',
+      text: label,
+    });
+    const desc = el('div', {
+      className: 'mt-1 text-[10px] text-white/40 leading-relaxed',
+      text: description,
+    });
+    textWrap.append(title, desc);
+    row.append(input, textWrap);
+    return { row, input };
+  };
+
+  const reportRow = buildCheckbox('Markdown Report', 'Executive summary, sessions, timeline, evidence index.');
+  const pdfRow = buildCheckbox('PDF Report', 'Printable brief for incident review and compliance.');
+  const jsonRow = buildCheckbox('Raw JSON', 'Full analysis artifact with sessions + timeline.');
+  const timelineRow = buildCheckbox('Timeline CSV', 'Evidence-backed timeline for SIEM ingestion.');
+  const sessionsRow = buildCheckbox('Sessions CSV', 'Flow summary for quick triage and correlation.');
+  const iocRow = buildCheckbox('IOC TXT', 'Unique DNS, SNI, HTTP hosts, and endpoints.');
+
+  exportFormats.append(reportRow.row, pdfRow.row, jsonRow.row, timelineRow.row, sessionsRow.row, iocRow.row);
+
+  const exportActions = el('div', { className: 'mt-5 flex items-center gap-2' });
+  const exportButton = el('button', {
+    className: 'cyber-btn px-4 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-[var(--accent-cyan)] uppercase',
+    text: 'Export',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  const exportBundleButton = el('button', {
+    className: 'cyber-btn px-4 py-2 text-[10px] font-[var(--font-display)] tracking-[0.2em] text-white/60 uppercase',
+    text: 'Export Bundle',
+    attrs: { type: 'button' },
+  }) as HTMLButtonElement;
+  exportActions.append(exportButton, exportBundleButton);
+
+  const exportStatus = el('div', {
+    className: 'mt-4 text-[10px] font-[var(--font-mono)] text-white/40 uppercase tracking-wider',
+    text: 'Ready to export.',
+  });
+
+  exportBuilder.append(
+    exportBuilderTitle,
+    exportBuilderSubtitle,
+    exportFormats,
+    exportActions,
+    exportStatus
+  );
+
+  const exportSummary = el('div', {
+    className: 'export-card rounded-xl border border-[var(--app-line)] bg-[var(--app-surface)]/50 p-5',
+  });
+  const exportSummaryTitle = el('div', {
+    className: 'text-[11px] font-[var(--font-display)] tracking-[0.25em] text-[var(--accent-amber)] uppercase',
+    text: 'Capture Snapshot',
+  });
+  const exportSummaryBody = el('div', {
+    className: 'export-summary-text mt-3 text-[11px] text-white/45 leading-relaxed',
+    text: 'Load a capture to see export coverage.',
+  });
+  exportSummary.append(exportSummaryTitle, exportSummaryBody);
+
+  exportBody.append(exportBuilder, exportSummary);
   exportPanel.append(exportHeader, exportBody);
 
   body.append(
@@ -1341,6 +1415,16 @@ export function createAppShell(root: HTMLElement): AppShellRefs {
     captureBadge: badgeText,
     capturePanel,
     exportPanel,
+    exportReportCheckbox: reportRow.input,
+    exportPdfCheckbox: pdfRow.input,
+    exportJsonCheckbox: jsonRow.input,
+    exportTimelineCheckbox: timelineRow.input,
+    exportSessionsCheckbox: sessionsRow.input,
+    exportIocCheckbox: iocRow.input,
+    exportButton,
+    exportBundleButton,
+    exportStatus,
+    exportSummary: exportSummaryBody,
     chatColumn,
     sessionsList,
     timelineList,

@@ -200,6 +200,37 @@
     box-shadow: 0 0 0 3px rgba(110, 181, 181, 0.12);
   }
 
+  .workflow-card {
+    border-color: transparent;
+    background: linear-gradient(180deg, rgba(22, 26, 32, 0.6), rgba(18, 22, 28, 0.5));
+  }
+  .workflow-card:hover {
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  }
+  .workflow-card.selected {
+    border-color: rgba(110, 181, 181, 0.7);
+    box-shadow: 0 0 0 2px rgba(110, 181, 181, 0.16);
+  }
+
+  .export-card {
+    backdrop-filter: blur(6px);
+  }
+
+  .export-row {
+    background: rgba(10, 12, 16, 0.35);
+    border-color: var(--app-line);
+  }
+
+  .export-row:hover {
+    border-color: var(--app-line-strong);
+    background: rgba(16, 20, 26, 0.45);
+  }
+
+  .export-summary-text {
+    white-space: pre-line;
+  }
+
   .workspace-option {
     color: rgba(255, 255, 255, 0.55);
     background: transparent;

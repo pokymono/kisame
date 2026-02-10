@@ -2,7 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { spawn } from 'child_process';
 import { existsSync, readFileSync, createReadStream, accessSync, constants as fsConstants } from 'fs';
 import os from 'os';
-import { stat } from 'fs/promises';
+import { stat, writeFile } from 'fs/promises';
 import { Readable } from 'stream';
 import { TransformStream } from 'stream/web';
 import * as path from 'path';
@@ -234,7 +234,6 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (_event, clientId?: string): P
     return { canceled: false, pcapPath, analysis };
   } catch (e) {
     sendUploadProgress(win, { stage: 'error', message: (e as Error).message ?? String(e) });
-    // Fallback: local Python engine (still uses tshark locally).
     const python = getPythonCommand();
     const enginePath = getEngineEntryPath();
     const localTshark = resolveLocalTsharkPath();
@@ -277,6 +276,86 @@ ipcMain.handle('kisame:openPcapAndAnalyze', async (_event, clientId?: string): P
     return { canceled: false, pcapPath, analysis };
   }
 });
+
+ipcMain.handle(
+  'kisame:saveExportFile',
+  async (
+    _event,
+    payload: { suggestedName: string; content: string; filters?: { name: string; extensions: string[] }[] }
+  ): Promise<{ canceled: true } | { canceled: false; filePath: string }> => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Save Export',
+      defaultPath: payload.suggestedName,
+      filters: payload.filters,
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    await writeFile(result.filePath, payload.content, 'utf8');
+    return { canceled: false, filePath: result.filePath };
+  }
+);
+
+ipcMain.handle(
+  'kisame:saveExportBundle',
+  async (
+    _event,
+    payload: { folderName?: string; files: { name: string; content: string }[] }
+  ): Promise<{ canceled: true } | { canceled: false; folderPath: string; filesWritten: string[] }> => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Select Export Folder',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+    const folderPath = result.filePaths[0];
+    const filesWritten: string[] = [];
+    for (const file of payload.files) {
+      const filePath = path.join(folderPath, file.name);
+      await writeFile(filePath, file.content, 'utf8');
+      filesWritten.push(filePath);
+    }
+    return { canceled: false, folderPath, filesWritten };
+  }
+);
+
+ipcMain.handle(
+  'kisame:saveExportPdf',
+  async (
+    _event,
+    payload: { html: string; suggestedName?: string; fileName?: string; folderPath?: string }
+  ): Promise<{ canceled: true } | { canceled: false; filePath: string }> => {
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    let targetPath: string | undefined;
+    if (payload.folderPath && payload.fileName) {
+      targetPath = path.join(payload.folderPath, payload.fileName);
+    } else {
+      const result = await dialog.showSaveDialog(win, {
+        title: 'Save PDF Report',
+        defaultPath: payload.suggestedName ?? 'kisame-report.pdf',
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      });
+      if (result.canceled || !result.filePath) return { canceled: true };
+      targetPath = result.filePath;
+    }
+
+    const pdfWindow = new BrowserWindow({
+      width: 900,
+      height: 1200,
+      show: false,
+      webPreferences: { offscreen: true },
+    });
+
+    const html = payload.html;
+    await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    const pdfBuffer = await pdfWindow.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+    });
+    await writeFile(targetPath, pdfBuffer);
+    pdfWindow.close();
+    return { canceled: false, filePath: targetPath };
+  }
+);
 
 ipcMain.handle('kisame:getBackendUrl', async (): Promise<string> => {
   return getBunServiceUrl();
