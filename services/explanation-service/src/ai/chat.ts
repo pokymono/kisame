@@ -358,14 +358,15 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
               stage: 'tool_call',
               message: `Calling tool: ${part.toolName}`,
             });
-          } else if (part.type === 'reasoning-delta') {
-            const delta = (part as { textDelta?: string }).textDelta ?? '';
+          } else if ((part as any).type === 'reasoning') {
+            const delta =
+              (part as { textDelta?: string; text?: string }).textDelta ?? (part as any).text ?? '';
             if (delta) {
               reasoningBuffer += delta;
               sendEvent(controller, { type: 'reasoning', delta });
             }
-          } else if ((part as any).type === 'reasoning') {
-            const delta = (part as { textDelta?: string; text?: string }).textDelta ?? (part as any).text ?? '';
+          } else if (part.type === 'reasoning-delta') {
+            const delta = (part as { textDelta?: string }).textDelta ?? '';
             if (delta) {
               reasoningBuffer += delta;
               sendEvent(controller, { type: 'reasoning', delta });
@@ -403,6 +404,17 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
           if (reasoningText) {
             reasoningBuffer = reasoningText;
             sendEvent(controller, { type: 'reasoning', delta: reasoningText });
+          } else {
+            const reasoningParts = (await (result as any).reasoning) as Array<{ text?: string; textDelta?: string }> | undefined;
+            if (Array.isArray(reasoningParts) && reasoningParts.length) {
+              const combined = reasoningParts
+                .map((part) => part.textDelta ?? part.text ?? '')
+                .join('');
+              if (combined) {
+                reasoningBuffer = combined;
+                sendEvent(controller, { type: 'reasoning', delta: combined });
+              }
+            }
           }
         }
 
