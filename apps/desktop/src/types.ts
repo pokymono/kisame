@@ -45,11 +45,20 @@ export type ToolCallLog = {
   status: 'pending' | 'running' | 'done' | 'error';
 };
 
+export type SuggestedNextStep = {
+  label: string;
+  query: string;
+  note?: string;
+  contextMode?: 'session' | 'capture';
+};
+
 export type ChatMessage = {
   role: 'user' | 'ai';
   text: string;
+  reasoningSummary?: string;
   status?: string;
   toolSummary?: string;
   toolCalls?: ToolCallLog[];
+  suggestedNextSteps?: SuggestedNextStep[];
   isStreaming?: boolean;
 };

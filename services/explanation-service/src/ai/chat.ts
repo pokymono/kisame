@@ -7,6 +7,7 @@ import { logInfo, logWarn, logError, toErrorMeta } from '../utils/logger';
 export type ChatStreamEvent =
   | { type: 'status'; stage: string; message?: string }
   | { type: 'text'; delta: string }
+  | { type: 'reasoning'; delta: string }
   | { type: 'tool_call'; toolCallId: string; toolName: string; input: unknown }
   | { type: 'tool_result'; toolCallId: string; toolName: string; output: unknown }
   | { type: 'tool_summary'; summary: string }
@@ -133,6 +134,12 @@ function summarizeToolResults(results: Array<{ toolCallId: string; toolName: str
           toolCallId,
           toolName,
           summary: `get_evidence_frames: first #${output.first ?? '?'} • last #${output.last ?? '?'}`,
+        };
+      case 'suggested_next_steps':
+        return {
+          toolCallId,
+          toolName,
+          summary: `suggested_next_steps: ${output?.suggestions?.length ?? 0} options`,
         };
       default:
         return { toolCallId, toolName, summary: `${toolName}: completed` };
@@ -350,6 +357,9 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
               stage: 'tool_call',
               message: `Calling tool: ${part.toolName}`,
             });
+          } else if (part.type === 'reasoning-delta') {
+            const delta = (part as { textDelta?: string }).textDelta ?? '';
+            if (delta) sendEvent(controller, { type: 'reasoning', delta });
           } else if (part.type === 'tool-result') {
             sendEvent(controller, {
               type: 'tool_result',
@@ -362,7 +372,7 @@ export function streamChat(query: string, context?: ChatContext): ReadableStream
               stage: 'tool_result',
               message: `Tool completed: ${part.toolName}`,
             });
-          } else if (part.type === 'reasoning-start' || part.type === 'reasoning-end') {
+          } else if (part.type === 'reasoning-start') {
             sendEvent(controller, {
               type: 'status',
               stage: 'reasoning',

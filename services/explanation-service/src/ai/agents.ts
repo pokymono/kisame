@@ -57,6 +57,7 @@ const ACTION_TOOLS: Record<RouterPlanAction, readonly ToolName[]> = {
   risk_assess: ['domain_risk_assess'],
   list_streams: ['pcap_tcp_streams'],
   follow_stream: ['pcap_follow_tcp_stream'],
+  suggested_next_steps: ['suggested_next_steps'],
 };
 
 function pickTools<T extends Record<string, any>>(tools: T, names: readonly (keyof T)[]): Partial<T> {
@@ -76,9 +77,12 @@ function createSpecialistAgent(
   baseToolNames: readonly ToolName[],
   planActions?: RouterPlanAction[]
 ): ToolLoopAgent {
-  const modelName = process.env.OPENAI_MODEL ?? 'gpt-5.2';
-  const minToolCalls = Number(process.env.KISAME_MIN_TOOL_CALLS ?? '10');
-  const maxSteps = Math.max(15, Number.isFinite(minToolCalls) ? minToolCalls + 5 : 15);
+  const modelName = process.env.OPENAI_MODEL ?? 'gpt-5.2-codex';
+  const minToolCalls =
+    route === 'summary' ? 0 : Number(process.env.KISAME_MIN_TOOL_CALLS ?? '0');
+  const maxSteps = Math.max(18, Number.isFinite(minToolCalls) ? minToolCalls + 6 : 18);
+  const reasoningSummary = process.env.KISAME_REASONING_SUMMARY ?? 'auto';
+  const reasoningEffort = process.env.KISAME_REASONING_EFFORT ?? 'high';
   const requestedPlan = (planActions && planActions.length ? planActions : DEFAULT_ROUTE_PLANS[route]).filter(
     (action): action is RouterPlanAction => Boolean(action)
   );
@@ -96,27 +100,59 @@ function createSpecialistAgent(
     }
   }
 
-  const mergedToolNames = Array.from(new Set([...baseToolNames, ...planToolNames]));
+  const mergedToolNames = Array.from(
+    new Set([
+      ...baseToolNames,
+      ...planToolNames,
+      ...(route !== 'summary' && 'suggested_next_steps' in tools ? (['suggested_next_steps'] as ToolName[]) : []),
+    ])
+  );
   const scopedTools = pickTools(tools, mergedToolNames);
-  const activeToolNames = Object.keys(scopedTools) as Array<keyof typeof scopedTools>;
+  const activeToolNames = Object.keys(scopedTools).filter((name): name is ToolName => name in tools);
   const forceToolFirstStep = Boolean(context?.artifact && activeToolNames.length > 0);
+  const hasSuggestedTool = 'suggested_next_steps' in scopedTools;
 
   return new ToolLoopAgent({
     id: `kisame-${route}-agent`,
     model: openai(modelName),
     instructions: buildSystemPrompt(context, ROUTE_SCOPES[route]),
     tools: scopedTools,
+    providerOptions: {
+      openai: {
+        ...(reasoningSummary ? { reasoningSummary } : {}),
+        ...(reasoningEffort ? { reasoningEffort } : {}),
+      },
+    },
     stopWhen: stepCountIs(maxSteps),
     prepareStep: async ({ stepNumber, steps }) => {
       if (!context?.artifact || activeToolNames.length === 0) {
-        return { activeTools: [] };
+        return { activeTools: [] as ToolName[] };
       }
       const totalToolCalls = steps.reduce((sum, step) => sum + (step.toolCalls?.length ?? 0), 0);
-      const needsMoreTools = Number.isFinite(minToolCalls) && minToolCalls > 0 && totalToolCalls < minToolCalls;
-      const planStepIndex = steps.filter((step) => (step.toolCalls?.length ?? 0) > 0).length;
-      const plannedAction = resolvedPlan[planStepIndex];
+      const suggestedCalled = steps.some((step) =>
+        (step.toolCalls ?? []).some((call) => call?.toolName === 'suggested_next_steps')
+      );
+      const minToolTarget = Number.isFinite(minToolCalls) && minToolCalls > 0 ? minToolCalls : 0;
+      const needsMoreBeforeSuggested =
+        minToolTarget > 0 && totalToolCalls < Math.max(0, minToolTarget - 1);
+
+      let planIndex = 0;
+      for (const step of steps) {
+        for (const call of step.toolCalls ?? []) {
+          if (!call) continue;
+          if (planIndex >= resolvedPlan.length) break;
+          const expectedAction = resolvedPlan[planIndex];
+          if (!expectedAction) break;
+          if (ACTION_TOOLS[expectedAction].includes(call.toolName as ToolName)) {
+            planIndex += 1;
+          }
+        }
+        if (planIndex >= resolvedPlan.length) break;
+      }
+
+      const plannedAction = resolvedPlan[planIndex];
       if (plannedAction) {
-        const plannedTools = ACTION_TOOLS[plannedAction].filter((tool) => tool in scopedTools);
+        const plannedTools = ACTION_TOOLS[plannedAction].filter((tool): tool is ToolName => tool in scopedTools);
         if (plannedTools.length) {
           return {
             activeTools: plannedTools,
@@ -124,10 +160,30 @@ function createSpecialistAgent(
           };
         }
       }
+
+      if (hasSuggestedTool && !suggestedCalled && !needsMoreBeforeSuggested) {
+        return {
+          activeTools: ['suggested_next_steps'] as ToolName[],
+          toolChoice: 'required',
+        };
+      }
+
+      if (needsMoreBeforeSuggested) {
+        const toolsWithoutSuggested = activeToolNames.filter((tool) => tool !== 'suggested_next_steps');
+        if (toolsWithoutSuggested.length) {
+          return {
+            activeTools: toolsWithoutSuggested,
+            toolChoice: 'required',
+          };
+        }
+      }
+
       return {
         activeTools: activeToolNames,
         toolChoice:
-          needsMoreTools || (stepNumber === 0 && steps.length === 0 && forceToolFirstStep) ? 'required' : 'auto',
+          needsMoreBeforeSuggested || (stepNumber === 0 && steps.length === 0 && forceToolFirstStep)
+            ? 'required'
+            : 'auto',
       };
     },
   });

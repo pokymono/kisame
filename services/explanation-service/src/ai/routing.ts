@@ -21,7 +21,8 @@ export type RouterPlanAction =
   | 'domain_sessions'
   | 'risk_assess'
   | 'list_streams'
-  | 'follow_stream';
+  | 'follow_stream'
+  | 'suggested_next_steps';
 
 export type RouteDecision = {
   route: RouteName;
@@ -85,6 +86,7 @@ export async function routeQuery(query: string, context?: ChatContext): Promise<
     'risk_assess',
     'list_streams',
     'follow_stream',
+    'suggested_next_steps',
   ]);
 
   const schema = z.object({
@@ -136,6 +138,7 @@ Plan actions (choose 1-4, or [] for summary):
 - risk_assess (domain_risk_assess)
 - list_streams (pcap_tcp_streams)
 - follow_stream (pcap_follow_tcp_stream)
+- suggested_next_steps (suggested_next_steps)
 
 Choose actions that match the selected route (e.g., stream -> list_streams/follow_stream, domain -> list_domains/domain_sessions).
 For "suspicious" or "analyze this PCAP" style requests:

@@ -150,6 +150,20 @@ async function initApp() {
     scrollThreshold: 80,
   });
 
+  ui.chatMessages.addEventListener('click', (event) => {
+    const target = event.target as HTMLElement | null;
+    const button = target?.closest('[data-next-step="true"]') as HTMLElement | null;
+    if (!button) return;
+    const query = button.getAttribute('data-next-step-query') ?? '';
+    if (!query) return;
+    const label = button.textContent?.trim();
+    const contextMode = button.getAttribute('data-next-step-context');
+    void sendChatQueryText(query, {
+      displayText: label ?? query,
+      contextMode: contextMode === 'session' || contextMode === 'capture' ? contextMode : undefined,
+    });
+  });
+
   // Chat history buffer
   const chatHistory: string[] = [];
   let chatHistoryIndex = -1;
@@ -1968,6 +1982,11 @@ async function initApp() {
           aiMessage.toolCalls = aiMessage.toolCalls ?? [];
           aiMessage.toolCalls.push(toolCall);
           aiMessage.status = undefined;
+        } else if (eventName === 'reasoning') {
+          const delta = data.delta ?? '';
+          if (delta) {
+            aiMessage.reasoningSummary = `${aiMessage.reasoningSummary ?? ''}${delta}`;
+          }
         } else if (eventName === 'tool_result') {
           const existing = aiMessage.toolCalls?.find(
             (t) => t.id === data.toolCallId || t.name === data.toolName
@@ -1975,6 +1994,12 @@ async function initApp() {
           if (existing) {
             existing.output = data.output;
             existing.status = 'done';
+          }
+          if (data.toolName === 'suggested_next_steps') {
+            const suggestions = data.output?.suggestions ?? data.output?.steps ?? [];
+            if (Array.isArray(suggestions)) {
+              aiMessage.suggestedNextSteps = suggestions;
+            }
           }
         } else if (eventName === 'tool_summary') {
           aiMessage.toolSummary = data.summary ?? '';

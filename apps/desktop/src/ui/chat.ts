@@ -1,6 +1,6 @@
 import { el } from './dom';
 import { renderMarkdown, destroyMarkdown } from './markdown';
-import type { ChatMessage, ToolCallLog } from '../types';
+import type { ChatMessage, ToolCallLog, SuggestedNextStep } from '../types';
 
 const toolDisplayNames: Record<string, string> = {
   pcap_overview: 'Loading overview',
@@ -20,6 +20,7 @@ const toolDisplayNames: Record<string, string> = {
   pcap_timeline_range: 'Getting timeline range',
   pcap_event_kinds: 'Listing event types',
   get_evidence_frames: 'Fetching evidence frames',
+  suggested_next_steps: 'Suggesting next steps',
 };
 
 export interface ChatManagerOptions {
@@ -209,6 +210,33 @@ function renderToolCalls(tools: ToolCallLog[]): HTMLElement {
   return container;
 }
 
+function renderSuggestedNextSteps(steps: SuggestedNextStep[]): HTMLElement {
+  const container = el('div', {
+    className: 'mt-3 flex flex-wrap gap-2',
+    attrs: { 'data-suggested-next-steps': 'true' },
+  });
+
+  for (const step of steps) {
+    const button = el('button', {
+      className:
+        'inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-[var(--font-mono)] ' +
+        'tracking-wide bg-white/5 border border-white/10 text-white/70 hover:text-white hover:border-white/30 ' +
+        'hover:bg-white/10 transition-colors',
+      text: step.label,
+      attrs: {
+        type: 'button',
+        title: step.note,
+        'data-next-step': 'true',
+        'data-next-step-query': step.query,
+        'data-next-step-context': step.contextMode,
+      },
+    });
+    container.append(button);
+  }
+
+  return container;
+}
+
 export function createMessageElement(message: ChatMessage): HTMLElement {
   if (message.role === 'user') {
     return el('div', {
@@ -254,6 +282,18 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
     bubble.append(renderToolCalls(message.toolCalls));
   }
 
+  if (message.reasoningSummary) {
+    const reasoningEl = el('div', {
+      className:
+        'mt-2 py-2 px-3 rounded text-[11px] text-white/60 ' +
+        'bg-white/[0.03] border border-white/10 ' +
+        'font-[var(--font-mono)] tracking-wide break-words overflow-hidden',
+      attrs: { 'data-reasoning-summary': 'true' },
+      text: `Reasoning summary: ${message.reasoningSummary}`,
+    });
+    bubble.append(reasoningEl);
+  }
+
   const contentEl = el('div', {
     className: 'streamdown-host prose-chat text-sm text-white/85 leading-relaxed overflow-hidden break-words',
     attrs: { 'data-content': 'true' },
@@ -278,6 +318,10 @@ export function createMessageElement(message: ChatMessage): HTMLElement {
       text: message.toolSummary,
     });
     bubble.append(summaryEl);
+  }
+
+  if (message.suggestedNextSteps && message.suggestedNextSteps.length > 0 && !message.isStreaming) {
+    bubble.append(renderSuggestedNextSteps(message.suggestedNextSteps));
   }
 
   messageWrap.append(bubble);
@@ -326,6 +370,21 @@ export function updateMessageElement(
     }
   }
 
+  const existingReasoning = bubble.querySelector('[data-reasoning-summary]');
+  if (existingReasoning) existingReasoning.remove();
+  if (message.reasoningSummary) {
+    bubble.append(
+      el('div', {
+        className:
+          'mt-2 py-2 px-3 rounded text-[11px] text-white/60 ' +
+          'bg-white/[0.03] border border-white/10 ' +
+          'font-[var(--font-mono)] tracking-wide break-words overflow-hidden',
+        attrs: { 'data-reasoning-summary': 'true' },
+        text: `Reasoning summary: ${message.reasoningSummary}`,
+      })
+    );
+  }
+
   const existingSummary = bubble.querySelector('[data-tool-summary]');
   if (existingSummary) existingSummary.remove();
   if (message.toolSummary && !message.isStreaming) {
@@ -338,6 +397,12 @@ export function updateMessageElement(
         text: message.toolSummary,
       })
     );
+  }
+
+  const existingNextSteps = bubble.querySelector('[data-suggested-next-steps]');
+  if (existingNextSteps) existingNextSteps.remove();
+  if (message.suggestedNextSteps && message.suggestedNextSteps.length > 0 && !message.isStreaming) {
+    bubble.append(renderSuggestedNextSteps(message.suggestedNextSteps));
   }
 
   const contentEl = bubble.querySelector('[data-content]') as HTMLElement | null;

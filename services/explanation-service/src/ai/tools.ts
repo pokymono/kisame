@@ -590,6 +590,8 @@ export function createTools(context?: ChatContext) {
         if ('error' in resolved) {
           return { error: resolved.error };
         }
+        const normalizeRange = (value?: number) => (typeof value === 'number' && value > 0 ? value : undefined);
+        const normalizedContains = typeof contains === 'string' ? contains.trim() : undefined;
         return followTcpStream(resolved.session, stream_id, {
           maxBytesPerDirection: max_bytes_per_direction,
           maxCombinedBytes: max_combined_bytes,
@@ -597,14 +599,14 @@ export function createTools(context?: ChatContext) {
           maxBytesPerSegment: max_bytes_per_segment,
           maxOutputSegments: max_output_segments,
           direction,
-          contains,
+          contains: normalizedContains || undefined,
           matchMode: match_mode,
           caseSensitive: case_sensitive,
           contextPackets: context_packets,
-          startFrame: start_frame,
-          endFrame: end_frame,
-          startTs: start_ts,
-          endTs: end_ts,
+          startFrame: normalizeRange(start_frame),
+          endFrame: normalizeRange(end_frame),
+          startTs: normalizeRange(start_ts),
+          endTs: normalizeRange(end_ts),
         });
       },
     }),
@@ -1101,6 +1103,37 @@ export function createTools(context?: ChatContext) {
           .map(([kind, count]) => ({ kind, count }))
           .sort((a, b) => b.count - a.count);
         return { total: entries.length, kinds: entries };
+      },
+    }),
+    suggested_next_steps: tool({
+      description:
+        'Provide suggested follow-up actions as clickable buttons for the user.',
+      inputSchema: z.object({
+        suggestions: z
+          .array(
+            z.object({
+              label: z.string().min(1).max(80),
+              query: z.string().min(1).max(400),
+              context_mode: z.enum(['session', 'capture']).optional(),
+              note: z.string().max(160).optional(),
+            })
+          )
+          .min(1)
+          .max(6),
+      }),
+      execute: async ({ suggestions }) => {
+        const normalized = (suggestions ?? [])
+          .map((item) => ({
+            label: item.label.trim().slice(0, 80),
+            query: item.query.trim().slice(0, 400),
+            contextMode: item.context_mode,
+            note: item.note?.trim().slice(0, 160),
+          }))
+          .filter((item) => item.label && item.query);
+        if (normalized.length === 0) {
+          return { error: 'No valid suggested steps provided.' };
+        }
+        return { suggestions: normalized };
       },
     }),
   };
