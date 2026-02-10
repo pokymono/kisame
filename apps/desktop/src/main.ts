@@ -602,6 +602,8 @@ async function initApp() {
 
   const sessionElements = new Map<string, HTMLElement>();
   const explorerElements = new Map<string, HTMLElement>();
+  let draggingCaptureId: string | null = null;
+  let dropTargetCaseEl: HTMLElement | null = null;
 
   type ExplorerCapture = {
     session_id: string;
@@ -1756,6 +1758,21 @@ async function initApp() {
     }
   }
 
+  const clearDropTarget = () => {
+    if (!dropTargetCaseEl) return;
+    dropTargetCaseEl.classList.remove('is-drop-target');
+    dropTargetCaseEl = null;
+  };
+
+  const setDropTarget = (target: HTMLElement | null) => {
+    if (dropTargetCaseEl === target) return;
+    clearDropTarget();
+    if (target) {
+      target.classList.add('is-drop-target');
+      dropTargetCaseEl = target;
+    }
+  };
+
   const setExplorerPromptVisible = (visible: boolean) => {
     ui.explorerPrompt.classList.toggle('hidden', !visible);
   };
@@ -1935,7 +1952,11 @@ async function initApp() {
           const row = el('button', {
             className:
               'w-full rounded px-3 py-2 text-left transition-all data-card pl-10',
-            attrs: { type: 'button', 'data-capture-id': capture.session_id },
+            attrs: {
+              type: 'button',
+              draggable: 'true',
+              'data-capture-id': capture.session_id,
+            },
           });
 
           const header = el('div', { className: 'flex items-center justify-between' });
@@ -2915,6 +2936,66 @@ async function initApp() {
   });
 
   updateTimelineControlsForScope();
+
+  ui.explorerList.addEventListener('dragstart', (event) => {
+    const target = event.target as HTMLElement | null;
+    const captureRow = target?.closest('[data-capture-id]') as HTMLElement | null;
+    if (!captureRow) return;
+    const id = captureRow.getAttribute('data-capture-id');
+    if (!id) return;
+    draggingCaptureId = id;
+    if (event.dataTransfer) {
+      event.dataTransfer.setData('application/x-kisame-capture', id);
+      event.dataTransfer.setData('text/plain', id);
+      event.dataTransfer.effectAllowed = 'move';
+    }
+  });
+
+  ui.explorerList.addEventListener('dragover', (event) => {
+    if (!draggingCaptureId) return;
+    const target = event.target as HTMLElement | null;
+    const caseRow = target?.closest('[data-node-kind="case"]') as HTMLElement | null;
+    if (!caseRow) {
+      setDropTarget(null);
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'move';
+    }
+    setDropTarget(caseRow);
+  });
+
+  ui.explorerList.addEventListener('drop', (event) => {
+    if (!draggingCaptureId) return;
+    const target = event.target as HTMLElement | null;
+    const caseRow = target?.closest('[data-node-kind="case"]') as HTMLElement | null;
+    event.preventDefault();
+    setDropTarget(null);
+    const captureId =
+      draggingCaptureId ??
+      event.dataTransfer?.getData('application/x-kisame-capture') ??
+      event.dataTransfer?.getData('text/plain');
+    if (!caseRow || !captureId) return;
+    const caseId = caseRow.getAttribute('data-case-id');
+    if (!caseId) return;
+    const targetCase = cases.find((c) => c.id === caseId);
+    const targetWorkspaceId =
+      targetCase?.workspaceId ?? caseRow.getAttribute('data-workspace-id') ?? 'default';
+    const currentWorkspaceId = workspaceAssignments[captureId] ?? 'default';
+    const currentCaseId = caseAssignments[captureId];
+    if (currentCaseId === caseId && currentWorkspaceId === targetWorkspaceId) return;
+    workspaceAssignments[captureId] = targetWorkspaceId;
+    caseAssignments[captureId] = caseId;
+    saveWorkspaceAssignments(workspaceAssignments);
+    saveCaseAssignments(caseAssignments);
+    renderExplorerCaptures();
+  });
+
+  ui.explorerList.addEventListener('dragend', () => {
+    draggingCaptureId = null;
+    clearDropTarget();
+  });
 
   ui.explorerList.addEventListener('click', async (event) => {
     const target = event.target as HTMLElement | null;
